@@ -1,5 +1,5 @@
 /**
- * Extruder - Module d'extrusion 3D
+ * Extruder - Module d'extrusion 3D de contours vectorisés
  */
 class Extruder {
     constructor() {
@@ -7,432 +7,261 @@ class Extruder {
         this.camera = null;
         this.renderer = null;
         this.controls = null;
-        this.mesh = null;
-        this.extrusionHeight = 10; // en mm
+        this.meshes = [];
+        this.modelSize = 100; // Taille par défaut du modèle en mm
         this.animationId = null;
-        this.isAnimating = false;
     }
-
+    
     /**
-     * Initialise la scène 3D avec Three.js
+     * Initialise la scène 3D
      */
     initScene() {
-        // Arrêter l'animation en cours si elle existe
-        this.stopAnimation();
-        
-        const container = document.getElementById('model-preview');
-        
-        // Nettoyer le conteneur
-        while (container.firstChild) {
-            container.removeChild(container.firstChild);
-        }
-        
-        const width = container.clientWidth || 300;
-        const height = container.clientHeight || 300;
-        
         // Créer la scène
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0xf5f5f5);
+        this.scene.background = new THREE.Color(0xf0f0f0);
         
         // Créer la caméra
-        this.camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
-        this.camera.position.z = 200;
+        const aspect = window.innerWidth / window.innerHeight;
+        this.camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 2000);
+        this.camera.position.set(0, 0, 200);
         
         // Créer le renderer
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
-        this.renderer.setSize(width, height);
+        this.renderer.setSize(window.innerWidth / 2, window.innerHeight / 2);
         this.renderer.setPixelRatio(window.devicePixelRatio);
         
-        // Ajouter le renderer au conteneur
+        // Récupérer le conteneur et y ajouter le renderer
+        const container = document.getElementById('model-preview');
+        if (container.firstChild) {
+            container.removeChild(container.firstChild);
+        }
         container.appendChild(this.renderer.domElement);
         
-        // Ajouter les contrôles orbitaux
+        // Ajuster la taille du renderer au conteneur
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        this.renderer.setSize(width, height);
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+        
+        // Ajouter les contrôles pour la rotation et le zoom
         this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.25;
+        this.controls.rotateSpeed = 0.35;
         
-        // Ajouter de l'éclairage
-        const ambientLight = new THREE.AmbientLight(0x404040);
+        // Ajouter des lumières
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         this.scene.add(ambientLight);
         
-        const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.5);
+        const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
         directionalLight1.position.set(1, 1, 1);
         this.scene.add(directionalLight1);
         
-        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+        const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
         directionalLight2.position.set(-1, -1, -1);
         this.scene.add(directionalLight2);
         
-        // Gestion du redimensionnement
-        const resizeHandler = () => {
-            if (!this.renderer || !this.camera) return;
-            
-            const newWidth = container.clientWidth || 300;
-            const newHeight = container.clientHeight || 300;
-            
-            this.camera.aspect = newWidth / newHeight;
-            this.camera.updateProjectionMatrix();
-            
-            this.renderer.setSize(newWidth, newHeight);
-        };
+        // Démarrer la boucle d'animation
+        this.animate();
         
-        // Supprimer les anciens écouteurs d'événements pour éviter les duplications
-        window.removeEventListener('resize', resizeHandler);
-        window.addEventListener('resize', resizeHandler);
-        
-        // Premier rendu
-        this.renderScene();
-        
-        // Démarrer l'animation uniquement quand nous ajoutons un modèle
+        // Gérer le redimensionnement
+        window.addEventListener('resize', this.onWindowResize.bind(this));
     }
     
     /**
-     * Méthode sécurisée pour le rendu
+     * Nettoie la scène en supprimant tous les maillages
      */
-    renderScene() {
-        if (this.scene && this.camera && this.renderer) {
-            this.renderer.render(this.scene, this.camera);
-        }
-    }
-    
-    /**
-     * Démarre la boucle d'animation
-     */
-    startAnimation() {
-        if (this.isAnimating) return;
-        this.isAnimating = true;
-        
-        const animate = () => {
-            if (!this.isAnimating) return;
-            
-            this.animationId = requestAnimationFrame(animate);
-            
-            if (this.controls) {
-                this.controls.update();
-            }
-            
-            this.renderScene();
-        };
-        
-        animate();
-    }
-    
-    /**
-     * Arrête la boucle d'animation
-     */
-    stopAnimation() {
-        this.isAnimating = false;
-        
-        if (this.animationId !== null) {
-            cancelAnimationFrame(this.animationId);
-            this.animationId = null;
-        }
-    }
-
-    /**
-     * Crée un modèle 3D à partir de contours vectorisés
-     * @param {Object} vectorData - Données vectorisées (contours, width, height)
-     * @param {number} extrusionHeight - Hauteur d'extrusion en mm
-     * @returns {THREE.Mesh} - Mesh 3D créé
-     */
-    createModel(vectorData, extrusionHeight) {
-        this.extrusionHeight = extrusionHeight;
-        
-        // Initialiser la scène si elle n'existe pas déjà
-        if (!this.scene) {
-            this.initScene();
-        }
-        
-        // Nettoyer tous les objets de la scène
-        if (this.mesh) {
-            this.scene.remove(this.mesh);
-            if (this.mesh.geometry) this.mesh.geometry.dispose();
-            if (this.mesh.material) {
-                if (Array.isArray(this.mesh.material)) {
-                    this.mesh.material.forEach(m => m.dispose());
+    cleanup() {
+        // Supprimer tous les maillages existants
+        for (const mesh of this.meshes) {
+            this.scene.remove(mesh);
+            if (mesh.geometry) mesh.geometry.dispose();
+            if (mesh.material) {
+                if (Array.isArray(mesh.material)) {
+                    mesh.material.forEach(m => m.dispose());
                 } else {
-                    this.mesh.material.dispose();
+                    mesh.material.dispose();
                 }
             }
-            this.mesh = null;
         }
         
-        // Vérifier la validité des données
-        if (!vectorData || !vectorData.contours || vectorData.contours.length === 0) {
-            console.warn("Aucun contour valide à extruder");
-            this.renderScene(); // Rendre la scène même sans nouveau modèle
-            return null;
-        }
-        
-        try {
-            // Créer une forme 2D à partir des contours
-            const shapes = this.createShapes(vectorData.contours, vectorData.height);
-            
-            if (shapes.length === 0) {
-                console.warn("Aucune forme valide créée à partir des contours");
-                this.renderScene(); // Rendre la scène même sans nouveau modèle
-                return null;
-            }
-            
-            // Paramètres d'extrusion
-            const extrudeSettings = {
-                steps: 1,
-                depth: extrusionHeight,
-                bevelEnabled: false
-            };
-            
-            // Créer la géométrie extrudée
-            const geometry = new THREE.ExtrudeGeometry(shapes, extrudeSettings);
-            
-            // Centrer la géométrie
-            geometry.computeBoundingBox();
-            const center = new THREE.Vector3();
-            geometry.boundingBox.getCenter(center);
-            geometry.translate(-center.x, -center.y, -extrusionHeight / 2);
-            
-            // Créer le matériau
-            const material = new THREE.MeshStandardMaterial({
-                color: 0x3498db,
-                metalness: 0.2,
-                roughness: 0.5,
-                side: THREE.DoubleSide
-            });
-            
-            // Créer le mesh
-            this.mesh = new THREE.Mesh(geometry, material);
-            
-            // Stocker les contours originaux et la hauteur de l'image pour l'export DXF
-            this.mesh.userData.contours = vectorData.contours;
-            this.mesh.userData.imageHeight = vectorData.height;
-            
-            // Ajouter le mesh à la scène
-            this.scene.add(this.mesh);
-            
-            // Ajuster la caméra pour avoir une vue complète du modèle
-            this.fitCameraToObject(this.mesh);
-            
-            // Démarrer l'animation maintenant que nous avons un modèle
-            this.startAnimation();
-            
-            // Forcer un rendu immédiat
-            this.renderScene();
-            
-            return this.mesh;
-        } catch (error) {
-            console.error("Erreur lors de la création du modèle 3D:", error);
-            this.renderScene(); // Rendre la scène même en cas d'erreur
-            return null;
-        }
+        // Réinitialiser le tableau de maillages
+        this.meshes = [];
     }
-
+    
     /**
-     * Crée des formes Three.js à partir des contours vectorisés
-     * @param {Array} contours - Contours vectorisés
-     * @param {number} imageHeight - Hauteur de l'image originale pour inverser les coordonnées Y
-     * @returns {Array} - Formes Three.js
+     * Réinitialise la caméra pour voir tout le modèle
      */
-    createShapes(contours, imageHeight) {
-        const shapes = [];
+    resetCamera() {
+        if (this.meshes.length === 0) return;
         
-        // S'assurer que les contours sont valides
-        if (!contours || !Array.isArray(contours)) {
-            console.warn("Contours invalides");
-            return shapes;
+        // Créer une boîte englobante pour tous les maillages
+        const box = new THREE.Box3();
+        
+        for (const mesh of this.meshes) {
+            box.expandByObject(mesh);
         }
         
-        contours.forEach(contour => {
-            if (!contour || contour.length < 3) return; // Ignorer les contours trop petits
-            
-            // Créer une nouvelle forme
-            const shape = new THREE.Shape();
-            
-            // Inverser les coordonnées Y pour corriger l'orientation
-            // Dans Three.js, Y+ pointe vers le haut, tandis que dans les images, Y+ pointe vers le bas
-            const firstPoint = contour[0];
-            shape.moveTo(firstPoint.x, imageHeight - firstPoint.y);
-            
-            // Ajouter les autres points
-            for (let i = 1; i < contour.length; i++) {
-                if (contour[i] && typeof contour[i].x === 'number' && typeof contour[i].y === 'number') {
-                    shape.lineTo(contour[i].x, imageHeight - contour[i].y);
-                }
-            }
-            
-            // Fermer la forme
-            shape.closePath();
-            
-            shapes.push(shape);
-        });
-        
-        return shapes;
-    }
-
-    /**
-     * Ajuste la caméra pour avoir une vue complète de l'objet
-     * @param {THREE.Mesh} object - Objet à cadrer
-     */
-    fitCameraToObject(object) {
-        if (!object || !this.camera || !this.controls) return;
-        
-        const boundingBox = new THREE.Box3().setFromObject(object);
+        // Calculer le centre et la taille de la boîte
         const center = new THREE.Vector3();
+        box.getCenter(center);
         const size = new THREE.Vector3();
+        box.getSize(size);
         
-        boundingBox.getCenter(center);
-        boundingBox.getSize(size);
-        
+        // Ajuster la distance de la caméra pour voir tout le modèle
         const maxDim = Math.max(size.x, size.y, size.z);
         const fov = this.camera.fov * (Math.PI / 180);
-        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+        let distance = maxDim / (2 * Math.tan(fov / 2));
         
-        // Ajouter marge
-        cameraZ *= 1.5;
+        // Ajouter une marge pour être sûr de tout voir
+        distance *= 1.5;
         
-        // Mise à jour de la position de la caméra
-        this.camera.position.z = cameraZ;
-        
-        // Mise à jour de la cible des contrôles
+        // Positionner la caméra
+        this.camera.position.set(0, 0, distance);
         this.controls.target.copy(center);
         
-        // Mise à jour des limites
-        this.camera.near = Math.max(0.1, cameraZ / 100);
-        this.camera.far = cameraZ * 10;
-        this.camera.updateProjectionMatrix();
-        
+        // Mettre à jour les contrôles et la caméra
         this.controls.update();
-    }
-
-    /**
-     * Exporte les contours vectorisés au format DXF
-     * @returns {Blob} - Fichier DXF en tant que Blob
-     */
-    exportDXF() {
-        if (!this.mesh) {
-            throw new Error("Aucun modèle à exporter");
-        }
-        
-        // Obtenir les contours originaux pour l'export DXF
-        const contours = this.mesh.userData.contours || [];
-        const imageHeight = this.mesh.userData.imageHeight || 0;
-        
-        if (contours.length === 0) {
-            throw new Error("Aucun contour trouvé pour l'export DXF");
-        }
-        
-        // Fonction pour créer un fichier DXF simple
-        function createDXF(contours, imageHeight) {
-            // En-tête DXF simplifiée
-            let dxf = '';
-            dxf += '0\nSECTION\n';
-            dxf += '2\nHEADER\n';
-            dxf += '0\nENDSEC\n';
-            dxf += '0\nSECTION\n';
-            dxf += '2\nENTITIES\n';
-            
-            // Créer une polyline pour chaque contour
-            contours.forEach((contour, index) => {
-                if (contour.length < 3) return; // Ignorer les contours trop petits
-                
-                // Utiliser des LINE simples au lieu de POLYLINE pour éviter tout problème de fermeture
-                for (let i = 0; i < contour.length - 1; i++) {
-                    const p1 = contour[i];
-                    const p2 = contour[i + 1];
-                    
-                    // Coordonnées Y inversées car DXF a l'origine en bas à gauche
-                    const y1 = imageHeight - p1.y;
-                    const y2 = imageHeight - p2.y;
-                    
-                    dxf += '0\nLINE\n';
-                    dxf += '8\nCONTOUR\n'; // Calque
-                    dxf += `10\n${p1.x.toFixed(4)}\n`; // Point de départ X
-                    dxf += `20\n${y1.toFixed(4)}\n`;   // Point de départ Y
-                    dxf += `30\n0\n`;                 // Point de départ Z
-                    dxf += `11\n${p2.x.toFixed(4)}\n`; // Point d'arrivée X
-                    dxf += `21\n${y2.toFixed(4)}\n`;   // Point d'arrivée Y
-                    dxf += `31\n0\n`;                 // Point d'arrivée Z
-                }
-                
-                // Fermer le contour en connectant le dernier et le premier point
-                // seulement si le contour n'est pas déjà fermé
-                const first = contour[0];
-                const last = contour[contour.length - 1];
-                
-                // Vérifier si le contour est déjà fermé
-                if (Math.abs(first.x - last.x) > 0.0001 || Math.abs(first.y - last.y) > 0.0001) {
-                    const y1 = imageHeight - last.y;
-                    const y2 = imageHeight - first.y;
-                    
-                    dxf += '0\nLINE\n';
-                    dxf += '8\nCONTOUR\n';
-                    dxf += `10\n${last.x.toFixed(4)}\n`;
-                    dxf += `20\n${y1.toFixed(4)}\n`;
-                    dxf += `30\n0\n`;
-                    dxf += `11\n${first.x.toFixed(4)}\n`;
-                    dxf += `21\n${y2.toFixed(4)}\n`;
-                    dxf += `31\n0\n`;
-                }
-            });
-            
-            // Fin du fichier
-            dxf += '0\nENDSEC\n';
-            dxf += '0\nEOF\n';
-            
-            return dxf;
-        }
-        
-        // Générer le DXF et le convertir en Blob
-        const dxfContent = createDXF(contours, imageHeight);
-        return new Blob([dxfContent], { type: 'application/dxf' });
-    }
-
-    /**
-     * Exporte le modèle 3D en format STL
-     * @returns {Blob} - Fichier STL en tant que Blob
-     */
-    exportSTL() {
-        if (!this.mesh) {
-            throw new Error("Aucun modèle à exporter");
-        }
-        
-        // Créer un exportateur STL
-        const exporter = new THREE.STLExporter();
-        
-        // Exporter le modèle
-        const stlString = exporter.parse(this.mesh, { binary: true });
-        
-        // Créer un Blob à partir du résultat
-        return new Blob([stlString], { type: 'application/octet-stream' });
+        this.camera.updateProjectionMatrix();
     }
     
-    // Nettoyer les ressources lors de la destruction
-    cleanup() {
-        this.stopAnimation();
+    /**
+     * Exporte le modèle au format STL
+     * @returns {Blob} - Blob contenant les données STL
+     */
+    exportSTL() {
+        if (this.meshes.length === 0) {
+            throw new Error("Aucun modèle à exporter");
+        }
         
-        if (this.mesh) {
-            this.scene.remove(this.mesh);
-            if (this.mesh.geometry) this.mesh.geometry.dispose();
-            if (this.mesh.material) {
-                if (Array.isArray(this.mesh.material)) {
-                    this.mesh.material.forEach(m => m.dispose());
-                } else {
-                    this.mesh.material.dispose();
+        // Créer un nouvel exporter STL
+        const exporter = new THREE.STLExporter();
+        
+        // Si nous avons plusieurs maillages, créer un groupe
+        let objectToExport;
+        
+        if (this.meshes.length === 1) {
+            objectToExport = this.meshes[0];
+        } else {
+            // Créer un groupe temporaire
+            const group = new THREE.Group();
+            for (const mesh of this.meshes) {
+                group.add(mesh.clone());
+            }
+            objectToExport = group;
+        }
+        
+        // Exporter le modèle
+        const stlString = exporter.parse(objectToExport);
+        
+        // Convertir la chaîne en Blob
+        const blob = new Blob([stlString], { type: 'application/octet-stream' });
+        
+        return blob;
+    }
+    
+    /**
+     * Exporte les contours au format DXF
+     * @returns {Blob} - Blob contenant les données DXF
+     */
+    exportDXF() {
+        if (this.meshes.length === 0) {
+            throw new Error("Aucun contour à exporter");
+        }
+        
+        // Collecter tous les contours de tous les maillages
+        const allContours = [];
+        let imageHeight = 0;
+        
+        for (const mesh of this.meshes) {
+            if (mesh.userData.contours) {
+                allContours.push(...mesh.userData.contours);
+                if (mesh.userData.imageHeight) {
+                    imageHeight = mesh.userData.imageHeight;
                 }
             }
-            this.mesh = null;
         }
         
-        if (this.renderer) {
-            this.renderer.dispose();
-            this.renderer = null;
+        if (allContours.length === 0) {
+            throw new Error("Aucun contour disponible pour l'exportation DXF");
         }
+        
+        // Créer un nouveau document DXF
+        const dxf = this.createDXF(allContours, imageHeight);
+        
+        // Convertir la chaîne en Blob
+        const blob = new Blob([dxf], { type: 'application/dxf' });
+        
+        return blob;
+    }
+    
+    /**
+     * Crée un fichier DXF à partir des contours
+     * @param {Array} contours - Liste des contours
+     * @param {number} imageHeight - Hauteur de l'image d'origine
+     * @returns {string} - Contenu du fichier DXF
+     */
+    createDXF(contours, imageHeight) {
+        // Début du fichier DXF
+        let dxf = '0\nSECTION\n2\nENTITIES\n';
+        
+        // Pour chaque contour, créer une polyligne
+        contours.forEach(contour => {
+            if (contour.length < 2) return;
+            
+            // Pour chaque point du contour, créer une entité LINE
+            for (let i = 0; i < contour.length - 1; i++) {
+                const startPoint = contour[i];
+                const endPoint = contour[i + 1];
+                
+                // Inverser l'axe Y car DXF a l'origine en bas à gauche
+                const y1 = imageHeight - startPoint.y;
+                const y2 = imageHeight - endPoint.y;
+                
+                // Ajouter une entité LINE
+                dxf += '0\nLINE\n';
+                dxf += '8\n0\n'; // Calque 0
+                dxf += `10\n${startPoint.x}\n`; // Point de départ X
+                dxf += `20\n${y1}\n`; // Point de départ Y
+                dxf += '30\n0\n'; // Point de départ Z
+                dxf += `11\n${endPoint.x}\n`; // Point d'arrivée X
+                dxf += `21\n${y2}\n`; // Point d'arrivée Y
+                dxf += '31\n0\n'; // Point d'arrivée Z
+            }
+        });
+        
+        // Fin du fichier DXF
+        dxf += '0\nENDSEC\n0\nEOF\n';
+        
+        return dxf;
+    }
+    
+    /**
+     * Gère le redimensionnement de la fenêtre
+     */
+    onWindowResize() {
+        const container = document.getElementById('model-preview');
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+        
+        this.renderer.setSize(width, height);
+    }
+    
+    /**
+     * Boucle d'animation pour le rendu continu
+     */
+    animate() {
+        this.animationId = requestAnimationFrame(this.animate.bind(this));
         
         if (this.controls) {
-            this.controls.dispose();
-            this.controls = null;
+            this.controls.update();
         }
         
-        this.scene = null;
-        this.camera = null;
+        this.renderer.render(this.scene, this.camera);
     }
 }
 

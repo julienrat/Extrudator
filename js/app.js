@@ -41,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const strokewidthInput = document.getElementById('strokewidth');
     const strokewidthValue = document.getElementById('strokewidth-value');
     const rightangleenhanceInput = document.getElementById('rightangleenhance');
+    const preserveholesInput = document.getElementById('preserveholes');
     
     // Éléments de la webcam
     const webcamBtn = document.getElementById('webcam-btn');
@@ -158,7 +159,8 @@ document.addEventListener('DOMContentLoaded', () => {
             colorsampling: parseInt(colorsamplingInput.value),
             opttolerance: parseFloat(opttoleranceInput.value),
             strokewidth: parseFloat(strokewidthInput.value),
-            rightangleenhance: rightangleenhanceInput.checked
+            rightangleenhance: rightangleenhanceInput.checked,
+            preserveholes: preserveholesInput.checked
         };
     }
     

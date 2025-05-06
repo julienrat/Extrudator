@@ -235,6 +235,9 @@ class Vectorizer {
                     colorsampling: advancedOptions.colorsampling !== undefined ? advancedOptions.colorsampling : 0,
                     rightangleenhance: advancedOptions.rightangleenhance !== undefined ? advancedOptions.rightangleenhance : false,
                     
+                    // Paramètres de préservation des trous
+                    preserveholes: advancedOptions.preserveholes !== undefined ? advancedOptions.preserveholes : true,
+                    
                     // Autres paramètres
                     numberofcolors: 2,
                     mincolorratio: 0,
@@ -314,7 +317,7 @@ class Vectorizer {
                 }
                 
                 const paths = svgDoc.querySelectorAll('path');
-                const contours = [];
+                let allContours = [];
                 
                 // Si pas de chemins, utiliser méthode de secours
                 if (!paths || paths.length === 0) {
@@ -323,10 +326,13 @@ class Vectorizer {
                 }
                 
                 paths.forEach(path => {
-                    // Ignorer les paths blancs (fond)
+                    // Ignorer les paths blancs (fond) si on n'est pas en mode préservation des trous
                     const fillColor = path.getAttribute('fill');
-                    if (fillColor === '#FFFFFF' || fillColor === 'white' || 
-                        fillColor === '#ffffff' || fillColor === 'rgb(255,255,255)') {
+                    const isWhite = fillColor === '#FFFFFF' || fillColor === 'white' || 
+                                    fillColor === '#ffffff' || fillColor === 'rgb(255,255,255)';
+                    
+                    // Si c'est un chemin blanc et qu'on ne préserve pas les trous, l'ignorer
+                    if (isWhite && !options.preserveholes) {
                         return;
                     }
                     
@@ -350,16 +356,72 @@ class Vectorizer {
                         if (simplifiedPoints.length > 2 && !this.isFrameContour(simplifiedPoints)) {
                             // Si pathomit est défini, vérifier la taille minimale du contour
                             if (!options.pathomit || simplifiedPoints.length >= options.pathomit) {
-                                contours.push(simplifiedPoints);
+                                // Ajouter un marqueur pour les trous (contours blancs)
+                                allContours.push({
+                                    points: simplifiedPoints,
+                                    isHole: isWhite,
+                                    area: this.calculateArea(simplifiedPoints)
+                                });
                             }
                         }
                     }
                 });
                 
+                // Trier les contours par aire (du plus grand au plus petit)
+                allContours.sort((a, b) => Math.abs(b.area) - Math.abs(a.area));
+                
                 // Si aucun contour valide, utiliser méthode de secours
-                if (contours.length === 0) {
+                if (allContours.length === 0) {
                     console.warn("Aucun contour valide après traitement SVG");
                     return this.fallbackVectorize(this.threshold, simplification, options).then(resolve).catch(reject);
+                }
+                
+                // Organiser les contours pour gérer les trous si l'option est activée
+                let contours = [];
+                
+                if (options.preserveholes) {
+                    // Trouver le contour parent pour chaque trou potentiel
+                    for (let i = 0; i < allContours.length; i++) {
+                        if (allContours[i].isHole) {
+                            // C'est un trou, trouver son parent
+                            let foundParent = false;
+                            for (let j = 0; j < allContours.length; j++) {
+                                if (!allContours[j].isHole && this.isPointInContour(
+                                    allContours[i].points[0], allContours[j].points)) {
+                                    // Si ce contour n'a pas encore de trous, initialiser le tableau
+                                    if (!allContours[j].holes) {
+                                        allContours[j].holes = [];
+                                    }
+                                    // Ajouter ce trou à son parent
+                                    allContours[j].holes.push(allContours[i].points);
+                                    foundParent = true;
+                                    break;
+                                }
+                            }
+                            // Si aucun parent trouvé, traiter comme un contour normal mais inversé
+                            if (!foundParent && allContours[i].points.length > 3) {
+                                // Inverser le sens pour un trou isolé
+                                contours.push(allContours[i].points.reverse());
+                            }
+                        } else {
+                            // Contour normal (non trou)
+                            contours.push(allContours[i].points);
+                        }
+                    }
+                    
+                    // Maintenant, ajouter les trous à la liste des contours mais avec un marqueur
+                    for (let i = 0; i < allContours.length; i++) {
+                        if (!allContours[i].isHole && allContours[i].holes && allContours[i].holes.length > 0) {
+                            // Pour chaque trou, l'ajouter comme contour séparé avec un marqueur
+                            for (let j = 0; j < allContours[i].holes.length; j++) {
+                                // Inverser l'orientation des trous pour qu'ils soient correctement traités
+                                contours.push(allContours[i].holes[j].reverse());
+                            }
+                        }
+                    }
+                } else {
+                    // Si on ne préserve pas les trous, utiliser uniquement les contours noirs
+                    contours = allContours.filter(c => !c.isHole).map(c => c.points);
                 }
                 
                 // Dessiner l'aperçu vectorisé
@@ -376,6 +438,41 @@ class Vectorizer {
                 this.fallbackVectorize(this.threshold, simplification, options).then(resolve).catch(reject);
             }
         });
+    }
+    
+    /**
+     * Calcule l'aire d'un polygone (utile pour trier et filtrer les contours)
+     * @param {Array} contour - Points du contour
+     * @returns {number} - Aire du polygone (négatif si orientation anti-horaire)
+     */
+    calculateArea(contour) {
+        let area = 0;
+        for (let i = 0; i < contour.length; i++) {
+            const j = (i + 1) % contour.length;
+            area += contour[i].x * contour[j].y;
+            area -= contour[j].x * contour[i].y;
+        }
+        return area / 2;
+    }
+    
+    /**
+     * Vérifie si un point est à l'intérieur d'un contour
+     * @param {Object} point - Point à tester {x, y}
+     * @param {Array} contour - Contour sous forme de tableau de points {x, y}
+     * @returns {boolean} - true si le point est à l'intérieur du contour
+     */
+    isPointInContour(point, contour) {
+        // Algorithme ray-casting
+        let inside = false;
+        for (let i = 0, j = contour.length - 1; i < contour.length; j = i++) {
+            const xi = contour[i].x, yi = contour[i].y;
+            const xj = contour[j].x, yj = contour[j].y;
+            
+            const intersect = ((yi > point.y) !== (yj > point.y)) &&
+                (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
     }
     
     /**
@@ -414,77 +511,185 @@ class Vectorizer {
                 processedData = tempCtx.getImageData(0, 0, this.width, this.height);
             }
             
-            // Créer un tableau 2D pour stocker les pixels binaires avec padding
+            // Déterminer si nous devons préserver les trous
+            const preserveHoles = advancedOptions.preserveholes !== undefined ? 
+                advancedOptions.preserveholes : true;
+            
+            // Créer deux tableaux 2D pour stocker les pixels noirs et blancs
             // Le padding aide à détecter les contours aux bords
             const paddedWidth = this.width + 4;
             const paddedHeight = this.height + 4;
             const binaryImage = Array(paddedHeight).fill().map(() => Array(paddedWidth).fill(false));
             
+            // Si nous préservons les trous, nous devons également tracker les pixels blancs
+            // pour détecter les contours intérieurs (trous)
+            const invertedImage = preserveHoles ? 
+                Array(paddedHeight).fill().map(() => Array(paddedWidth).fill(false)) : null;
+            
             // Remplir le tableau avec les données d'image
             for (let y = 0; y < this.height; y++) {
                 for (let x = 0; x < this.width; x++) {
                     const idx = (y * this.width + x) * 4;
-                    binaryImage[y + 2][x + 2] = processedData.data[idx] === 0; // true pour noir
+                    const isBlack = processedData.data[idx] === 0;
+                    binaryImage[y + 2][x + 2] = isBlack; // true pour noir
+                    
+                    // Si nous préservons les trous, inverser l'image pour les contours intérieurs
+                    if (preserveHoles) {
+                        invertedImage[y + 2][x + 2] = !isBlack; // true pour blanc
+                    }
                 }
             }
             
-            // Lisser l'image pour réduire les petits défauts - utiliser blurdelta comme seuil si disponible
+            // Lisser l'image pour réduire les petits défauts
             const blurThreshold = advancedOptions.blurdelta !== undefined ? 
                 Math.floor(advancedOptions.blurdelta / 10) : 2;
             const smoothedImage = this.smoothImage(binaryImage, paddedWidth, paddedHeight, blurThreshold);
             
-            // Trouver les contours
-            const contours = this.findContoursImproved(smoothedImage, paddedWidth, paddedHeight);
+            // Si nous préservons les trous, lisser également l'image inversée
+            const smoothedInverted = preserveHoles ? 
+                this.smoothImage(invertedImage, paddedWidth, paddedHeight, blurThreshold) : null;
+            
+            // Trouver les contours extérieurs (noirs)
+            const externalContours = this.findContoursImproved(smoothedImage, paddedWidth, paddedHeight);
             
             // Ajuster les coordonnées pour compenser le padding
-            const adjustedContours = contours.map(contour => 
+            const adjustedExternalContours = externalContours.map(contour => 
                 contour.map(point => ({
                     x: point.x - 2,
                     y: point.y - 2
                 }))
             );
             
+            // Si nous préservons les trous, trouver les contours intérieurs (blancs)
+            let adjustedInternalContours = [];
+            if (preserveHoles && smoothedInverted) {
+                const internalContours = this.findContoursImproved(
+                    smoothedInverted, paddedWidth, paddedHeight, 
+                    true // Marqueur pour indiquer que ce sont des contours intérieurs
+                );
+                
+                adjustedInternalContours = internalContours.map(contour => 
+                    contour.map(point => ({
+                        x: point.x - 2,
+                        y: point.y - 2
+                    }))
+                );
+            }
+            
             // Déterminer la taille minimale des formes (filtrer les petits contours)
             const turdsize = advancedOptions.turdsize !== undefined ? advancedOptions.turdsize : 2;
             
-            // Utiliser ltres/qtres si disponible pour la tolérance de simplification
+            // Utiliser ltres/qtres pour la tolérance de simplification
             const simplifyTolerance = advancedOptions.ltres !== undefined ?
                 Math.max(0.3, advancedOptions.ltres) : 
                 Math.max(0.5, (advancedOptions.alphamax || 1) * simplification / 5);
             
-            // Filtrer et simplifier
-            const filteredContours = adjustedContours
-                // Filtrer selon la taille (turdsize)
-                .filter(contour => {
-                    // Calculer l'aire approximative du contour
-                    let area = 0;
-                    for (let i = 0; i < contour.length; i++) {
-                        const j = (i + 1) % contour.length;
-                        area += contour[i].x * contour[j].y;
-                        area -= contour[j].x * contour[i].y;
-                    }
-                    area = Math.abs(area) / 2;
-                    return area >= turdsize;
-                })
-                // Simplifier les contours
-                .map(contour => simplify(contour, simplifyTolerance))
-                // Filtrer les contours non valides ou qui ressemblent à des cadres
-                .filter(contour => 
-                    contour.length >= 3 && 
-                    !this.isFrameContour(contour) &&
-                    // Appliquer pathomit si spécifié
-                    (!advancedOptions.pathomit || contour.length >= advancedOptions.pathomit)
+            // Traiter les contours extérieurs
+            const filteredExternalContours = this.processContours(
+                adjustedExternalContours, turdsize, simplifyTolerance, 
+                advancedOptions.pathomit, false // isHole=false
+            );
+            
+            // Traiter les contours intérieurs (trous)
+            const filteredInternalContours = preserveHoles ? 
+                this.processContours(
+                    adjustedInternalContours, turdsize, simplifyTolerance, 
+                    advancedOptions.pathomit, true // isHole=true
+                ) : [];
+            
+            // Combiner tous les contours
+            let allContours = [...filteredExternalContours];
+            
+            if (preserveHoles) {
+                // Organiser les contours pour associer les trous à leurs parents
+                let contoursWithHoles = this.organizeContours(
+                    filteredExternalContours, filteredInternalContours
                 );
+                
+                // Fusionner la liste finale
+                allContours = contoursWithHoles;
+            }
             
             // Dessiner l'aperçu
-            this.drawVectorPreview(filteredContours);
+            this.drawVectorPreview(allContours);
             
+            // Résoudre avec les contours trouvés
             resolve({
-                contours: filteredContours,
+                contours: allContours,
                 width: this.width,
                 height: this.height
             });
         });
+    }
+    
+    /**
+     * Traite les contours pour filtrage et simplification
+     * @param {Array} contours - Liste de contours à traiter
+     * @param {number} turdsize - Taille minimale des formes
+     * @param {number} simplifyTolerance - Tolérance pour la simplification
+     * @param {number} pathomit - Taille minimale des chemins
+     * @param {boolean} isHole - Indique si ce sont des trous (contours intérieurs)
+     * @returns {Array} - Contours filtrés et simplifiés
+     */
+    processContours(contours, turdsize, simplifyTolerance, pathomit, isHole) {
+        return contours
+            // Filtrer selon la taille (turdsize)
+            .filter(contour => {
+                // Calculer l'aire approximative du contour
+                let area = this.calculateArea(contour);
+                
+                // Pour les trous, l'aire est négative (orientation inverse)
+                if (isHole) area = -area;
+                
+                return Math.abs(area) >= turdsize;
+            })
+            // Simplifier les contours
+            .map(contour => simplify(contour, simplifyTolerance))
+            // Filtrer les contours non valides ou qui ressemblent à des cadres
+            .filter(contour => 
+                contour.length >= 3 && 
+                !this.isFrameContour(contour) &&
+                // Appliquer pathomit si spécifié
+                (!pathomit || contour.length >= pathomit)
+            )
+            // Inverser les trous pour avoir une orientation correcte
+            .map(contour => isHole ? contour.reverse() : contour);
+    }
+    
+    /**
+     * Organise les contours en associant les trous à leurs parents
+     * @param {Array} externalContours - Contours extérieurs
+     * @param {Array} internalContours - Contours intérieurs (trous)
+     * @returns {Array} - Liste finale de contours
+     */
+    organizeContours(externalContours, internalContours) {
+        let result = [...externalContours];
+        
+        // Pour chaque trou, vérifier s'il est à l'intérieur d'un contour extérieur
+        for (const hole of internalContours) {
+            if (hole.length < 3) continue;
+            
+            // Prendre un point du trou pour le test
+            const testPoint = hole[0];
+            let foundParent = false;
+            
+            // Chercher un contour extérieur qui contient ce point
+            for (const contour of externalContours) {
+                if (this.isPointInContour(testPoint, contour)) {
+                    // Ajouter ce trou à la liste des contours
+                    result.push(hole);
+                    foundParent = true;
+                    break;
+                }
+            }
+            
+            // Si aucun parent trouvé, l'ajouter comme contour normal
+            if (!foundParent) {
+                result.push(hole);
+            }
+        }
+        
+        return result;
     }
     
     /**
@@ -525,15 +730,16 @@ class Vectorizer {
         
         return result;
     }
-    
+
     /**
      * Méthode améliorée pour trouver les contours
      * @param {Array} binaryImage - Image binaire 2D
      * @param {number} width - Largeur de l'image
      * @param {number} height - Hauteur de l'image
+     * @param {boolean} isInverted - Indique si les contours sont inversés (trous)
      * @returns {Array} - Tableau de contours
      */
-    findContoursImproved(binaryImage, width, height) {
+    findContoursImproved(binaryImage, width, height, isInverted = false) {
         // Tableau pour contours
         const contours = [];
         // Tableau pour marquer les pixels déjà visités
@@ -610,7 +816,8 @@ class Vectorizer {
                             contour.push({ ...contour[0] });
                         }
                         
-                        contours.push(contour);
+                        // Inverser l'orientation pour les trous si nécessaire
+                        contours.push(isInverted ? contour.reverse() : contour);
                     }
                 }
             }
@@ -998,16 +1205,63 @@ class Vectorizer {
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
-        // Dessiner les contours
-        ctx.strokeStyle = '#000000';
+        // Évaluer l'orientation des contours pour détecter les trous
+        const analyzeContour = (contour) => {
+            // Calculer le sens d'orientation (horaire/anti-horaire) du contour
+            let area = 0;
+            for (let i = 0; i < contour.length; i++) {
+                const j = (i + 1) % contour.length;
+                area += contour[i].x * contour[j].y;
+                area -= contour[j].x * contour[i].y;
+            }
+            // Un area positif signifie une orientation anti-horaire (contour extérieur)
+            // Un area négatif signifie une orientation horaire (contour intérieur = trou)
+            return { 
+                isHole: area < 0,
+                area: Math.abs(area / 2)
+            };
+        };
+        
+        // Trier les contours par aire pour dessiner les plus grands d'abord
+        const analyzedContours = contours.map(contour => ({
+            contour,
+            ...analyzeContour(contour)
+        })).sort((a, b) => b.area - a.area);
+        
+        // Dessiner d'abord les contours extérieurs (non-trous)
         ctx.fillStyle = '#000000';
+        ctx.strokeStyle = '#000000';
         ctx.lineWidth = 1;
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
         
-        // Dessiner chaque contour
-        contours.forEach(contour => {
-            if (contour.length < 2) return;
+        for (const { contour, isHole } of analyzedContours) {
+            if (contour.length < 2) continue;
+            
+            if (!isHole) {
+                // Contour extérieur (noir)
+                ctx.fillStyle = '#000000';
+                ctx.strokeStyle = '#000000';
+                
+                ctx.beginPath();
+                ctx.moveTo(contour[0].x, contour[0].y);
+                
+                for (let i = 1; i < contour.length; i++) {
+                    ctx.lineTo(contour[i].x, contour[i].y);
+                }
+                
+                ctx.fill();
+                ctx.stroke();
+            }
+        }
+        
+        // Ensuite, dessiner les contours intérieurs (trous) en blanc
+        for (const { contour, isHole } of analyzedContours) {
+            if (contour.length < 2 || !isHole) continue;
+            
+            // Trou (blanc)
+            ctx.fillStyle = '#FFFFFF';
+            ctx.strokeStyle = '#202020';
             
             ctx.beginPath();
             ctx.moveTo(contour[0].x, contour[0].y);
@@ -1016,15 +1270,16 @@ class Vectorizer {
                 ctx.lineTo(contour[i].x, contour[i].y);
             }
             
-            // Remplir et tracer les contours
             ctx.fill();
             ctx.stroke();
-        });
+        }
         
         // Ajouter un message de diagnostic
         ctx.fillStyle = '#333333';
         ctx.font = '12px Arial';
-        ctx.fillText(`Contours détectés: ${contours.length}`, 5, 15);
+        const holesCount = analyzedContours.filter(c => c.isHole).length;
+        const shapesCount = analyzedContours.filter(c => !c.isHole).length;
+        ctx.fillText(`Contours: ${shapesCount}, Trous: ${holesCount}`, 5, 15);
     }
 }
 
