@@ -319,37 +319,63 @@ class Extruder {
             throw new Error("Aucun contour trouvé pour l'export DXF");
         }
         
-        // Fonction pour créer un fichier DXF basique
+        // Fonction pour créer un fichier DXF simple
         function createDXF(contours, imageHeight) {
-            // En-tête DXF
-            let dxf = `0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n`;
+            // En-tête DXF simplifiée
+            let dxf = '';
+            dxf += '0\nSECTION\n';
+            dxf += '2\nHEADER\n';
+            dxf += '0\nENDSEC\n';
+            dxf += '0\nSECTION\n';
+            dxf += '2\nENTITIES\n';
             
-            // Générer des POLYLINE pour chaque contour
+            // Créer une polyline pour chaque contour
             contours.forEach((contour, index) => {
-                if (contour.length < 2) return;
+                if (contour.length < 3) return; // Ignorer les contours trop petits
                 
-                // Commencer une POLYLINE
-                dxf += `0\nPOLYLINE\n`;
-                dxf += `8\nCONTOUR${index}\n`; // Calque
-                dxf += `66\n1\n`; // Suivent les vertices
-                dxf += `70\n1\n`; // Polyline fermée
+                // Utiliser des LINE simples au lieu de POLYLINE pour éviter tout problème de fermeture
+                for (let i = 0; i < contour.length - 1; i++) {
+                    const p1 = contour[i];
+                    const p2 = contour[i + 1];
+                    
+                    // Coordonnées Y inversées car DXF a l'origine en bas à gauche
+                    const y1 = imageHeight - p1.y;
+                    const y2 = imageHeight - p2.y;
+                    
+                    dxf += '0\nLINE\n';
+                    dxf += '8\nCONTOUR\n'; // Calque
+                    dxf += `10\n${p1.x.toFixed(4)}\n`; // Point de départ X
+                    dxf += `20\n${y1.toFixed(4)}\n`;   // Point de départ Y
+                    dxf += `30\n0\n`;                 // Point de départ Z
+                    dxf += `11\n${p2.x.toFixed(4)}\n`; // Point d'arrivée X
+                    dxf += `21\n${y2.toFixed(4)}\n`;   // Point d'arrivée Y
+                    dxf += `31\n0\n`;                 // Point d'arrivée Z
+                }
                 
-                // Ajouter chaque point comme VERTEX
-                contour.forEach(point => {
-                    dxf += `0\nVERTEX\n`;
-                    dxf += `8\nCONTOUR${index}\n`; // Même calque que la polyline
-                    // Inverser les coordonnées Y pour DXF (origine en bas à gauche)
-                    dxf += `10\n${point.x}\n`;
-                    dxf += `20\n${imageHeight - point.y}\n`;
-                    dxf += `30\n0\n`; // Z = 0 (2D)
-                });
+                // Fermer le contour en connectant le dernier et le premier point
+                // seulement si le contour n'est pas déjà fermé
+                const first = contour[0];
+                const last = contour[contour.length - 1];
                 
-                // Terminer la POLYLINE
-                dxf += `0\nSEQEND\n`;
+                // Vérifier si le contour est déjà fermé
+                if (Math.abs(first.x - last.x) > 0.0001 || Math.abs(first.y - last.y) > 0.0001) {
+                    const y1 = imageHeight - last.y;
+                    const y2 = imageHeight - first.y;
+                    
+                    dxf += '0\nLINE\n';
+                    dxf += '8\nCONTOUR\n';
+                    dxf += `10\n${last.x.toFixed(4)}\n`;
+                    dxf += `20\n${y1.toFixed(4)}\n`;
+                    dxf += `30\n0\n`;
+                    dxf += `11\n${first.x.toFixed(4)}\n`;
+                    dxf += `21\n${y2.toFixed(4)}\n`;
+                    dxf += `31\n0\n`;
+                }
             });
             
-            // Pied de page DXF
-            dxf += `0\nENDSEC\n0\nEOF\n`;
+            // Fin du fichier
+            dxf += '0\nENDSEC\n';
+            dxf += '0\nEOF\n';
             
             return dxf;
         }
