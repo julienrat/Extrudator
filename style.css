@@ -91,10 +91,31 @@ button:disabled {
     width: 200px;
 }
 
-#export-btn {
-    display: block;
-    margin: 0 auto;
-    width: 200px;
+/* Style des boutons d'export */
+.export-section {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+}
+
+#export-stl-btn, #export-dxf-btn {
+    width: 180px;
+}
+
+#export-stl-btn {
+    background-color: #3498db;
+}
+
+#export-dxf-btn {
+    background-color: #27ae60;
+}
+
+#export-stl-btn:hover {
+    background-color: #2980b9;
+}
+
+#export-dxf-btn:hover {
+    background-color: #219653;
 }
 
 .preview-section {

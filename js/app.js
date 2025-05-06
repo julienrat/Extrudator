@@ -15,7 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const simplificationInput = document.getElementById('simplification');
     const simplificationValue = document.getElementById('simplification-value');
     const processBtn = document.getElementById('process-btn');
-    const exportBtn = document.getElementById('export-btn');
+    const exportStlBtn = document.getElementById('export-stl-btn');
+    const exportDxfBtn = document.getElementById('export-dxf-btn');
     const modelPreviewDiv = document.getElementById('model-preview');
     
     // Écouter les changements de valeur du seuil
@@ -32,7 +33,8 @@ document.addEventListener('DOMContentLoaded', () => {
     imageInput.addEventListener('change', (event) => {
         if (event.target.files && event.target.files[0]) {
             // Réinitialiser l'interface au changement d'image
-            exportBtn.disabled = true;
+            exportStlBtn.disabled = true;
+            exportDxfBtn.disabled = true;
             
             // Afficher un message de chargement
             processBtn.disabled = true;
@@ -134,8 +136,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             })
             .then(mesh => {
-                // Activer le bouton d'exportation si le modèle a été créé
-                exportBtn.disabled = mesh === null;
+                // Activer les boutons d'exportation si le modèle a été créé
+                const exportEnabled = mesh !== null;
+                exportStlBtn.disabled = !exportEnabled;
+                exportDxfBtn.disabled = !exportEnabled;
                 
                 // Réactiver le bouton de traitement
                 processBtn.disabled = false;
@@ -159,8 +163,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Écouter le clic sur le bouton d'exportation
-    exportBtn.addEventListener('click', () => {
+    // Écouter le clic sur le bouton d'exportation STL
+    exportStlBtn.addEventListener('click', () => {
         try {
             // Exporter le modèle en STL
             const stlBlob = extruder.exportSTL();
@@ -169,14 +173,30 @@ document.addEventListener('DOMContentLoaded', () => {
             const fileName = 'extrudator_model.stl';
             saveAs(stlBlob, fileName);
         } catch (error) {
-            console.error('Erreur lors de l\'exportation:', error);
-            alert('Erreur lors de l\'exportation: ' + error.message);
+            console.error('Erreur lors de l\'exportation STL:', error);
+            alert('Erreur lors de l\'exportation STL: ' + error.message);
+        }
+    });
+    
+    // Écouter le clic sur le bouton d'exportation DXF
+    exportDxfBtn.addEventListener('click', () => {
+        try {
+            // Exporter les contours en DXF
+            const dxfBlob = extruder.exportDXF();
+            
+            // Télécharger le fichier
+            const fileName = 'extrudator_contours.dxf';
+            saveAs(dxfBlob, fileName);
+        } catch (error) {
+            console.error('Erreur lors de l\'exportation DXF:', error);
+            alert('Erreur lors de l\'exportation DXF: ' + error.message);
         }
     });
     
     // Désactiver les boutons au démarrage
     processBtn.disabled = true;
-    exportBtn.disabled = true;
+    exportStlBtn.disabled = true;
+    exportDxfBtn.disabled = true;
     
     // Initialiser la scène 3D vide pour éviter des erreurs
     extruder.initScene();

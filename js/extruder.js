@@ -201,6 +201,10 @@ class Extruder {
             // Créer le mesh
             this.mesh = new THREE.Mesh(geometry, material);
             
+            // Stocker les contours originaux et la hauteur de l'image pour l'export DXF
+            this.mesh.userData.contours = vectorData.contours;
+            this.mesh.userData.imageHeight = vectorData.height;
+            
             // Ajouter le mesh à la scène
             this.scene.add(this.mesh);
             
@@ -298,6 +302,63 @@ class Extruder {
         this.controls.update();
     }
 
+    /**
+     * Exporte les contours vectorisés au format DXF
+     * @returns {Blob} - Fichier DXF en tant que Blob
+     */
+    exportDXF() {
+        if (!this.mesh) {
+            throw new Error("Aucun modèle à exporter");
+        }
+        
+        // Obtenir les contours originaux pour l'export DXF
+        const contours = this.mesh.userData.contours || [];
+        const imageHeight = this.mesh.userData.imageHeight || 0;
+        
+        if (contours.length === 0) {
+            throw new Error("Aucun contour trouvé pour l'export DXF");
+        }
+        
+        // Fonction pour créer un fichier DXF basique
+        function createDXF(contours, imageHeight) {
+            // En-tête DXF
+            let dxf = `0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n`;
+            
+            // Générer des POLYLINE pour chaque contour
+            contours.forEach((contour, index) => {
+                if (contour.length < 2) return;
+                
+                // Commencer une POLYLINE
+                dxf += `0\nPOLYLINE\n`;
+                dxf += `8\nCONTOUR${index}\n`; // Calque
+                dxf += `66\n1\n`; // Suivent les vertices
+                dxf += `70\n1\n`; // Polyline fermée
+                
+                // Ajouter chaque point comme VERTEX
+                contour.forEach(point => {
+                    dxf += `0\nVERTEX\n`;
+                    dxf += `8\nCONTOUR${index}\n`; // Même calque que la polyline
+                    // Inverser les coordonnées Y pour DXF (origine en bas à gauche)
+                    dxf += `10\n${point.x}\n`;
+                    dxf += `20\n${imageHeight - point.y}\n`;
+                    dxf += `30\n0\n`; // Z = 0 (2D)
+                });
+                
+                // Terminer la POLYLINE
+                dxf += `0\nSEQEND\n`;
+            });
+            
+            // Pied de page DXF
+            dxf += `0\nENDSEC\n0\nEOF\n`;
+            
+            return dxf;
+        }
+        
+        // Générer le DXF et le convertir en Blob
+        const dxfContent = createDXF(contours, imageHeight);
+        return new Blob([dxfContent], { type: 'application/dxf' });
+    }
+    
     /**
      * Exporte le modèle 3D en format STL
      * @returns {Blob} - Fichier STL en tant que Blob
