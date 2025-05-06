@@ -185,63 +185,300 @@ class Vectorizer {
     }
 
     /**
-     * Vectorise l'image en utilisant une méthode directe de binarisation
+     * Vectorise l'image en utilisant ImageTracer
      * @param {number} threshold - Valeur de seuil pour la binarisation
      * @param {number} simplification - Niveau de simplification des contours
+     * @param {Object} advancedOptions - Options avancées supplémentaires
      * @returns {Object} - Contours vectorisés
      */
-    vectorize(threshold = this.threshold, simplification = this.simplificationTolerance) {
+    vectorize(threshold = this.threshold, simplification = this.simplificationTolerance, advancedOptions = {}) {
         this.threshold = threshold;
         this.simplificationTolerance = simplification;
         
-        // Utiliser une méthode directe de binarisation pour la vectorisation
-        return this.binarizationVectorize(threshold, simplification);
+        // Binariser l'image
+        const binaryData = this.applyThreshold(threshold);
+        
+        // Prétraiter l'image pour améliorer la qualité
+        const processedData = this.preprocessImage(binaryData);
+        
+        // Créer un canvas temporaire pour l'image binarisée
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = this.width;
+        tempCanvas.height = this.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.putImageData(processedData, 0, 0);
+        
+        return new Promise((resolve, reject) => {
+            try {
+                // Vérifier si ImageTracer est disponible
+                if (typeof ImageTracer === 'undefined') {
+                    console.warn("ImageTracer n'est pas disponible, utilisation de la méthode de secours");
+                    return this.fallbackVectorize(threshold, simplification, advancedOptions).then(resolve).catch(reject);
+                }
+                
+                // Options de base pour ImageTracer - utiliser les paramètres avancés si fournis
+                const options = {
+                    // Paramètres généraux de tracé (précision et simplification)
+                    ltres: advancedOptions.ltres !== undefined ? advancedOptions.ltres : Math.max(0.1, (11 - simplification) / 10),
+                    qtres: advancedOptions.qtres !== undefined ? advancedOptions.qtres : Math.max(0.1, (11 - simplification) / 10),
+                    pathomit: advancedOptions.pathomit !== undefined ? advancedOptions.pathomit : Math.max(1, simplification),
+                    
+                    // Paramètres de filtre et nettoyage
+                    turdsize: advancedOptions.turdsize !== undefined ? advancedOptions.turdsize : 2,
+                    alphamax: advancedOptions.alphamax !== undefined ? advancedOptions.alphamax : 1,
+                    
+                    // Paramètres de flou
+                    blurradius: advancedOptions.blurradius !== undefined ? advancedOptions.blurradius : 0,
+                    blurdelta: advancedOptions.blurdelta !== undefined ? advancedOptions.blurdelta : 20,
+                    
+                    // Paramètres de détection
+                    colorsampling: advancedOptions.colorsampling !== undefined ? advancedOptions.colorsampling : 0,
+                    rightangleenhance: advancedOptions.rightangleenhance !== undefined ? advancedOptions.rightangleenhance : false,
+                    
+                    // Autres paramètres
+                    numberofcolors: 2,
+                    mincolorratio: 0,
+                    colorquantcycles: 1,
+                    opttolerance: advancedOptions.opttolerance !== undefined ? advancedOptions.opttolerance : 0.2,
+                    strokewidth: advancedOptions.strokewidth !== undefined ? advancedOptions.strokewidth : 1,
+                    
+                    // Paramètres de sortie
+                    layering: 0,
+                    linefilter: true,
+                    roundcoords: 1,
+                    viewbox: true,
+                    scale: 1
+                };
+                
+                // Si un traitement de flou est demandé mais doit être appliqué différemment
+                if ((options.blurradius > 0 || options.blurdelta < 100) && options.colorsampling === 0) {
+                    // Créer un canvas temporaire pour appliquer le flou
+                    const blurCanvas = document.createElement('canvas');
+                    blurCanvas.width = this.width;
+                    blurCanvas.height = this.height;
+                    const blurCtx = blurCanvas.getContext('2d');
+                    
+                    // Dessiner l'image sur le canvas
+                    blurCtx.putImageData(processedData, 0, 0);
+                    
+                    // Si blur radius est défini, appliquer un flou gaussien
+                    if (options.blurradius > 0) {
+                        blurCtx.filter = `blur(${options.blurradius}px)`;
+                        blurCtx.drawImage(blurCanvas, 0, 0);
+                    }
+                    
+                    // Récupérer l'image traitée
+                    const blurredData = blurCtx.getImageData(0, 0, this.width, this.height);
+                    
+                    // Vectoriser l'image traitée
+                    return this.vectorizeImageData(blurredData, options, simplification).then(resolve).catch(reject);
+                } else {
+                    // Vectoriser directement
+                    return this.vectorizeImageData(processedData, options, simplification).then(resolve).catch(reject);
+                }
+            } catch (error) {
+                console.error("Erreur générale de vectorisation:", error);
+                this.fallbackVectorize(threshold, simplification, advancedOptions).then(resolve).catch(reject);
+            }
+        });
     }
     
     /**
-     * Méthode de vectorisation par binarisation directe
-     * @param {number} threshold - Valeur de seuil pour la binarisation
-     * @param {number} simplification - Niveau de simplification des contours
+     * Vectorisation de données d'image avec ImageTracer
+     * @param {ImageData} imageData - Données d'image à vectoriser
+     * @param {Object} options - Options de vectorisation
+     * @param {number} simplification - Niveau de simplification
      * @returns {Promise} - Promise résolue avec les contours
      */
-    binarizationVectorize(threshold, simplification) {
-        console.log("Utilisation de la méthode de vectorisation par binarisation directe");
+    vectorizeImageData(imageData, options, simplification) {
+        return new Promise((resolve, reject) => {
+            try {
+                // Début de la vectorisation avec ImageTracer
+                console.log("Vectorisation avec options:", options);
+                const svgString = ImageTracer.imagedataToSVG(imageData, options);
+                
+                if (!svgString || svgString.length < 100) {
+                    console.warn("SVG généré vide ou trop petit, utilisation de la méthode de secours");
+                    return this.fallbackVectorize(this.threshold, simplification, options).then(resolve).catch(reject);
+                }
+                
+                // Parser le SVG
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(svgString, "image/svg+xml");
+                
+                // Vérifier erreurs de parsing
+                const parseError = svgDoc.querySelector("parsererror");
+                if (parseError) {
+                    console.warn("Erreur de parsing SVG:", parseError.textContent);
+                    return this.fallbackVectorize(this.threshold, simplification, options).then(resolve).catch(reject);
+                }
+                
+                const paths = svgDoc.querySelectorAll('path');
+                const contours = [];
+                
+                // Si pas de chemins, utiliser méthode de secours
+                if (!paths || paths.length === 0) {
+                    console.warn("Aucun chemin trouvé dans le SVG");
+                    return this.fallbackVectorize(this.threshold, simplification, options).then(resolve).catch(reject);
+                }
+                
+                paths.forEach(path => {
+                    // Ignorer les paths blancs (fond)
+                    const fillColor = path.getAttribute('fill');
+                    if (fillColor === '#FFFFFF' || fillColor === 'white' || 
+                        fillColor === '#ffffff' || fillColor === 'rgb(255,255,255)') {
+                        return;
+                    }
+                    
+                    const d = path.getAttribute('d');
+                    if (!d || d.trim().length === 0) return;
+                    
+                    // Analyser le chemin SVG
+                    const points = this.parseSVGPath(d);
+                    
+                    // Vérifier si le contour est valide
+                    if (points.length > 2) {
+                        // Ajuster la tolérance en fonction du niveau de simplification
+                        // Utiliser ltres/qtres comme guide pour la tolérance de simplification
+                        const simplifyTolerance = options.ltres < 1 ? 
+                            options.ltres / 2 : simplification / 20;
+                        
+                        // Simplifier les contours
+                        const simplifiedPoints = simplify(points, simplifyTolerance);
+                        
+                        // Vérifier que le contour est valide après simplification
+                        if (simplifiedPoints.length > 2 && !this.isFrameContour(simplifiedPoints)) {
+                            // Si pathomit est défini, vérifier la taille minimale du contour
+                            if (!options.pathomit || simplifiedPoints.length >= options.pathomit) {
+                                contours.push(simplifiedPoints);
+                            }
+                        }
+                    }
+                });
+                
+                // Si aucun contour valide, utiliser méthode de secours
+                if (contours.length === 0) {
+                    console.warn("Aucun contour valide après traitement SVG");
+                    return this.fallbackVectorize(this.threshold, simplification, options).then(resolve).catch(reject);
+                }
+                
+                // Dessiner l'aperçu vectorisé
+                this.drawVectorPreview(contours);
+                
+                // Résoudre avec les contours trouvés
+                resolve({
+                    contours: contours,
+                    width: this.width,
+                    height: this.height
+                });
+            } catch (error) {
+                console.error("Erreur dans vectorizeImageData:", error);
+                this.fallbackVectorize(this.threshold, simplification, options).then(resolve).catch(reject);
+            }
+        });
+    }
+    
+    /**
+     * Méthode de secours pour la vectorisation
+     * @param {number} threshold - Valeur de seuil
+     * @param {number} simplification - Niveau de simplification
+     * @param {Object} advancedOptions - Options avancées supplémentaires
+     * @returns {Promise} - Promise résolue avec les contours
+     */
+    fallbackVectorize(threshold, simplification, advancedOptions = {}) {
+        console.log("Utilisation de la méthode de secours pour la vectorisation");
         
         return new Promise((resolve) => {
-            // Étape 1: Binariser l'image
+            // Binariser l'image
             const binaryData = this.applyThreshold(threshold);
             
-            // Étape 2: Prétraiter l'image pour améliorer la qualité
-            const processedData = this.preprocessImage(binaryData);
+            // Prétraiter l'image pour réduire le bruit
+            let processedData = this.preprocessImage(binaryData);
             
-            // Étape 3: Convertir en tableau 2D binaire
-            const binaryMatrix = [];
-            for (let y = 0; y < this.height; y++) {
-                const row = [];
-                for (let x = 0; x < this.width; x++) {
-                    const idx = (y * this.width + x) * 4;
-                    // true = noir, false = blanc
-                    row.push(processedData.data[idx] === 0);
-                }
-                binaryMatrix.push(row);
+            // Appliquer un flou si nécessaire
+            if (advancedOptions.blurradius && advancedOptions.blurradius > 0) {
+                // Créer un canvas temporaire pour le flou
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = this.width;
+                tempCanvas.height = this.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                // Dessiner l'image sur le canvas
+                tempCtx.putImageData(processedData, 0, 0);
+                
+                // Appliquer le flou
+                tempCtx.filter = `blur(${advancedOptions.blurradius}px)`;
+                tempCtx.drawImage(tempCanvas, 0, 0);
+                
+                // Récupérer les données floutées
+                processedData = tempCtx.getImageData(0, 0, this.width, this.height);
             }
             
-            // Étape 4: Trouver les contours
-            const contours = this.findBinaryContours(binaryMatrix);
+            // Créer un tableau 2D pour stocker les pixels binaires avec padding
+            // Le padding aide à détecter les contours aux bords
+            const paddedWidth = this.width + 4;
+            const paddedHeight = this.height + 4;
+            const binaryImage = Array(paddedHeight).fill().map(() => Array(paddedWidth).fill(false));
             
-            // Étape 5: Simplifier les contours
-            const simplifyTolerance = Math.max(0.5, simplification / 4);
-            const filteredContours = contours
-                .filter(contour => contour.length >= 3)
+            // Remplir le tableau avec les données d'image
+            for (let y = 0; y < this.height; y++) {
+                for (let x = 0; x < this.width; x++) {
+                    const idx = (y * this.width + x) * 4;
+                    binaryImage[y + 2][x + 2] = processedData.data[idx] === 0; // true pour noir
+                }
+            }
+            
+            // Lisser l'image pour réduire les petits défauts - utiliser blurdelta comme seuil si disponible
+            const blurThreshold = advancedOptions.blurdelta !== undefined ? 
+                Math.floor(advancedOptions.blurdelta / 10) : 2;
+            const smoothedImage = this.smoothImage(binaryImage, paddedWidth, paddedHeight, blurThreshold);
+            
+            // Trouver les contours
+            const contours = this.findContoursImproved(smoothedImage, paddedWidth, paddedHeight);
+            
+            // Ajuster les coordonnées pour compenser le padding
+            const adjustedContours = contours.map(contour => 
+                contour.map(point => ({
+                    x: point.x - 2,
+                    y: point.y - 2
+                }))
+            );
+            
+            // Déterminer la taille minimale des formes (filtrer les petits contours)
+            const turdsize = advancedOptions.turdsize !== undefined ? advancedOptions.turdsize : 2;
+            
+            // Utiliser ltres/qtres si disponible pour la tolérance de simplification
+            const simplifyTolerance = advancedOptions.ltres !== undefined ?
+                Math.max(0.3, advancedOptions.ltres) : 
+                Math.max(0.5, (advancedOptions.alphamax || 1) * simplification / 5);
+            
+            // Filtrer et simplifier
+            const filteredContours = adjustedContours
+                // Filtrer selon la taille (turdsize)
+                .filter(contour => {
+                    // Calculer l'aire approximative du contour
+                    let area = 0;
+                    for (let i = 0; i < contour.length; i++) {
+                        const j = (i + 1) % contour.length;
+                        area += contour[i].x * contour[j].y;
+                        area -= contour[j].x * contour[i].y;
+                    }
+                    area = Math.abs(area) / 2;
+                    return area >= turdsize;
+                })
+                // Simplifier les contours
                 .map(contour => simplify(contour, simplifyTolerance))
+                // Filtrer les contours non valides ou qui ressemblent à des cadres
                 .filter(contour => 
-                    contour.length >= 3 && !this.isFrameContour(contour)
+                    contour.length >= 3 && 
+                    !this.isFrameContour(contour) &&
+                    // Appliquer pathomit si spécifié
+                    (!advancedOptions.pathomit || contour.length >= advancedOptions.pathomit)
                 );
             
-            // Étape 6: Dessiner l'aperçu
+            // Dessiner l'aperçu
             this.drawVectorPreview(filteredContours);
             
-            // Résoudre avec les contours
             resolve({
                 contours: filteredContours,
                 width: this.width,
@@ -251,131 +488,497 @@ class Vectorizer {
     }
     
     /**
-     * Trouve les contours dans une image binaire par suivi de contour
-     * @param {Array} binaryMatrix - Matrice binaire 2D (true = noir, false = blanc)
+     * Lisse l'image binaire pour améliorer la détection de contours
+     * @param {Array} binaryImage - Image binaire 2D
+     * @param {number} width - Largeur de l'image
+     * @param {number} height - Hauteur de l'image
+     * @param {number} threshold - Seuil pour le lissage
+     * @returns {Array} - Image lissée
+     */
+    smoothImage(binaryImage, width, height, threshold = 2) {
+        const result = Array(height).fill().map(() => Array(width).fill(false));
+        
+        // Pour chaque pixel (en évitant les bords)
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                // Compter les voisins noirs (connectivité 8)
+                let blackCount = 0;
+                
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (binaryImage[y + dy][x + dx]) {
+                            blackCount++;
+                        }
+                    }
+                }
+                
+                // Règles de lissage adaptatives en fonction du seuil
+                if (binaryImage[y][x]) {
+                    // Si pixel est noir, le garder si entouré d'au moins threshold pixels noirs
+                    result[y][x] = blackCount > threshold;
+                } else {
+                    // Si pixel est blanc, le noircir s'il est entouré de beaucoup de pixels noirs
+                    result[y][x] = blackCount >= (9 - threshold);
+                }
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Méthode améliorée pour trouver les contours
+     * @param {Array} binaryImage - Image binaire 2D
+     * @param {number} width - Largeur de l'image
+     * @param {number} height - Hauteur de l'image
      * @returns {Array} - Tableau de contours
      */
-    findBinaryContours(binaryMatrix) {
-        const height = binaryMatrix.length;
-        const width = binaryMatrix[0].length;
-        const visited = Array(height).fill().map(() => Array(width).fill(false));
+    findContoursImproved(binaryImage, width, height) {
+        // Tableau pour contours
         const contours = [];
+        // Tableau pour marquer les pixels déjà visités
+        const visited = Array(height).fill().map(() => Array(width).fill(false));
         
-        // Directions pour le suivi de contour (8 directions)
+        // Directions: droite, bas, gauche, haut + diagonales
         const directions = [
-            [1, 0], [1, 1], [0, 1], [-1, 1],
+            [1, 0], [1, 1], [0, 1], [-1, 1], 
             [-1, 0], [-1, -1], [0, -1], [1, -1]
         ];
         
         // Parcourir l'image
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                // Si pixel noir non visité
-                if (binaryMatrix[y][x] && !visited[y][x]) {
-                    // Vérifier si c'est un pixel de bord
-                    let isBorder = false;
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                // Si c'est un pixel noir non visité qui est potentiellement un contour
+                if (binaryImage[y][x] && !visited[y][x] && this.isPotentialBoundary(binaryImage, x, y, width, height)) {
+                    // Tracer le contour
+                    const contour = [];
+                    let currentX = x;
+                    let currentY = y;
                     
-                    // Un pixel est un bord s'il a au moins un voisin blanc
-                    for (const [dx, dy] of directions) {
-                        const nx = x + dx;
-                        const ny = y + dy;
-                        
-                        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                            if (!binaryMatrix[ny][nx]) {
-                                isBorder = true;
-                                break;
-                            }
-                        } else {
-                            // Les pixels aux limites de l'image sont des bords
-                            isBorder = true;
-                            break;
-                        }
-                    }
+                    // Marquer comme point de départ
+                    const startX = x;
+                    const startY = y;
+                    visited[currentY][currentX] = true;
+                    contour.push({ x: currentX, y: currentY });
                     
-                    // Si c'est un bord, tracer le contour
-                    if (isBorder) {
-                        const contour = [];
-                        let currentX = x;
-                        let currentY = y;
-                        const startX = x;
-                        const startY = y;
+                    // Chercher le prochain point du contour
+                    let foundNext = false;
+                    
+                    do {
+                        foundNext = false;
                         
-                        // Marquer comme visité
-                        visited[currentY][currentX] = true;
-                        contour.push({ x: currentX, y: currentY });
-                        
-                        // Suivre le contour
-                        let foundNext = true;
-                        while (foundNext) {
-                            foundNext = false;
+                        // Essayer les 8 directions en commençant par la droite
+                        for (let i = 0; i < 8 && !foundNext; i++) {
+                            const [dx, dy] = directions[i];
+                            const nextX = currentX + dx;
+                            const nextY = currentY + dy;
                             
-                            // Essayer les 8 directions
-                            for (const [dx, dy] of directions) {
-                                const nx = currentX + dx;
-                                const ny = currentY + dy;
-                                
-                                // Vérifier si c'est un pixel valide
-                                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                                    // Si pixel noir non visité
-                                    if (binaryMatrix[ny][nx] && !visited[ny][nx]) {
-                                        // Vérifier si c'est un bord
-                                        let isNextBorder = false;
-                                        for (const [ddx, ddy] of directions) {
-                                            const nnx = nx + ddx;
-                                            const nny = ny + ddy;
-                                            
-                                            if (nnx >= 0 && nnx < width && nny >= 0 && nny < height) {
-                                                if (!binaryMatrix[nny][nnx]) {
-                                                    isNextBorder = true;
-                                                    break;
-                                                }
-                                            } else {
-                                                isNextBorder = true;
-                                                break;
-                                            }
-                                        }
-                                        
-                                        if (isNextBorder) {
-                                            // Ajouter au contour
-                                            currentX = nx;
-                                            currentY = ny;
-                                            visited[currentY][currentX] = true;
-                                            contour.push({ x: currentX, y: currentY });
-                                            foundNext = true;
-                                            break;
-                                        }
-                                    }
+                            // Vérifier les limites
+                            if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) {
+                                continue;
+                            }
+                            
+                            // Vérifier si c'est un pixel noir non visité
+                            if (binaryImage[nextY][nextX] && !visited[nextY][nextX]) {
+                                // Vérifier si c'est un point de contour
+                                if (this.isPotentialBoundary(binaryImage, nextX, nextY, width, height)) {
+                                    // Marquer comme visité et ajouter au contour
+                                    visited[nextY][nextX] = true;
+                                    contour.push({ x: nextX, y: nextY });
+                                    
+                                    // Mettre à jour la position courante
+                                    currentX = nextX;
+                                    currentY = nextY;
+                                    foundNext = true;
                                 }
                             }
-                            
-                            // Si on est revenu au point de départ, terminer
-                            if (currentX === startX && currentY === startY) {
-                                break;
-                            }
-                            
-                            // Limiter la taille du contour pour éviter les boucles infinies
-                            if (contour.length > 10000) {
-                                break;
-                            }
                         }
                         
+                        // Si on est revenu au point de départ ou si on ne trouve plus de point suivant
+                        if ((currentX === startX && currentY === startY) || !foundNext) {
+                            break;
+                        }
+                        
+                    } while (contour.length < 10000); // Limitation pour éviter boucles infinies
+                    
+                    // Ajouter le contour s'il est significatif
+                    if (contour.length >= 3) {
                         // Fermer le contour si nécessaire
-                        if (contour.length > 2 && 
+                        if (contour.length > 0 && 
                             (contour[0].x !== contour[contour.length - 1].x || 
                              contour[0].y !== contour[contour.length - 1].y)) {
                             contour.push({ ...contour[0] });
                         }
                         
-                        // Ajouter le contour s'il est assez grand
-                        if (contour.length >= 3) {
-                            contours.push(contour);
-                        }
+                        contours.push(contour);
                     }
                 }
             }
         }
         
         return contours;
+    }
+    
+    /**
+     * Vérifie si un pixel est potentiellement sur un contour
+     * @param {Array} binaryImage - Image binaire 2D
+     * @param {number} x - Coordonnée X
+     * @param {number} y - Coordonnée Y
+     * @param {number} width - Largeur de l'image
+     * @param {number} height - Hauteur de l'image
+     * @returns {boolean} - true si le pixel est potentiellement sur un contour
+     */
+    isPotentialBoundary(binaryImage, x, y, width, height) {
+        // Vérifier les limites
+        if (x <= 0 || x >= width - 1 || y <= 0 || y >= height - 1) {
+            return false;
+        }
+        
+        // Si le pixel n'est pas noir, ce n'est pas un contour
+        if (!binaryImage[y][x]) {
+            return false;
+        }
+        
+        // Vérifier si le pixel a au moins un voisin blanc (connectivité 4)
+        return !binaryImage[y-1][x] || // haut
+               !binaryImage[y+1][x] || // bas
+               !binaryImage[y][x-1] || // gauche
+               !binaryImage[y][x+1];   // droite
+    }
+
+    /**
+     * Parse un chemin SVG pour extraire les points
+     * @param {string} d - Attribut d du chemin SVG
+     * @returns {Array} - Points du contour
+     */
+    parseSVGPath(d) {
+        try {
+            // Regex améliorée pour capturer toutes les commandes SVG
+            const commands = d.match(/[MLHVCSQTAZmlhvcsqtaz][^MLHVCSQTAZmlhvcsqtaz]*/g) || [];
+            const points = [];
+            let currentX = 0;
+            let currentY = 0;
+            
+            // Point de départ pour la fermeture du chemin
+            let firstX = 0;
+            let firstY = 0;
+            let pathStarted = false;
+            
+            for (let i = 0; i < commands.length; i++) {
+                const command = commands[i];
+                const type = command.charAt(0);
+                
+                // Extraction sécurisée des arguments
+                const args = command.slice(1)
+                    .trim()
+                    .split(/[\s,]+/)
+                    .filter(arg => arg.length > 0)
+                    .map(arg => parseFloat(arg));
+                
+                switch (type) {
+                    case 'M': // MoveTo absolu
+                        if (args.length >= 2) {
+                            currentX = args[0];
+                            currentY = args[1];
+                            
+                            // Stocker le premier point pour fermer le chemin
+                            if (!pathStarted) {
+                                firstX = currentX;
+                                firstY = currentY;
+                                pathStarted = true;
+                            }
+                            
+                            points.push({ x: currentX, y: currentY });
+                            
+                            // Traiter les coordonnées additionnelles comme LineTo
+                            for (let j = 2; j < args.length; j += 2) {
+                                if (j + 1 < args.length) {
+                                    currentX = args[j];
+                                    currentY = args[j + 1];
+                                    points.push({ x: currentX, y: currentY });
+                                }
+                            }
+                        }
+                        break;
+                        
+                    case 'm': // MoveTo relatif
+                        if (args.length >= 2) {
+                            // Si c'est le premier mouvement, on prend les coordonnées absolues
+                            if (!pathStarted) {
+                                currentX = args[0];
+                                currentY = args[1];
+                                firstX = currentX;
+                                firstY = currentY;
+                                pathStarted = true;
+                            } else {
+                                currentX += args[0];
+                                currentY += args[1];
+                            }
+                            
+                            points.push({ x: currentX, y: currentY });
+                            
+                            // Traiter les coordonnées additionnelles comme LineTo relatif
+                            for (let j = 2; j < args.length; j += 2) {
+                                if (j + 1 < args.length) {
+                                    currentX += args[j];
+                                    currentY += args[j + 1];
+                                    points.push({ x: currentX, y: currentY });
+                                }
+                            }
+                        }
+                        break;
+                        
+                    case 'L': // LineTo absolu
+                        for (let j = 0; j < args.length; j += 2) {
+                            if (j + 1 < args.length) {
+                                currentX = args[j];
+                                currentY = args[j + 1];
+                                points.push({ x: currentX, y: currentY });
+                            }
+                        }
+                        break;
+                        
+                    case 'l': // LineTo relatif
+                        for (let j = 0; j < args.length; j += 2) {
+                            if (j + 1 < args.length) {
+                                currentX += args[j];
+                                currentY += args[j + 1];
+                                points.push({ x: currentX, y: currentY });
+                            }
+                        }
+                        break;
+                        
+                    case 'H': // Horizontal absolu
+                        for (let j = 0; j < args.length; j++) {
+                            currentX = args[j];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 'h': // Horizontal relatif
+                        for (let j = 0; j < args.length; j++) {
+                            currentX += args[j];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 'V': // Vertical absolu
+                        for (let j = 0; j < args.length; j++) {
+                            currentY = args[j];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 'v': // Vertical relatif
+                        for (let j = 0; j < args.length; j++) {
+                            currentY += args[j];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 'C': // Courbe cubique absolue
+                        for (let j = 0; j < args.length; j += 6) {
+                            if (j + 5 < args.length) {
+                                // Approximation avec points intermédiaires
+                                this.approximateCubicBezier(
+                                    points, 
+                                    currentX, currentY,
+                                    args[j], args[j + 1],
+                                    args[j + 2], args[j + 3],
+                                    args[j + 4], args[j + 5]
+                                );
+                                
+                                currentX = args[j + 4];
+                                currentY = args[j + 5];
+                            }
+                        }
+                        break;
+                        
+                    case 'c': // Courbe cubique relative
+                        for (let j = 0; j < args.length; j += 6) {
+                            if (j + 5 < args.length) {
+                                // Approximation avec points intermédiaires
+                                this.approximateCubicBezier(
+                                    points,
+                                    currentX, currentY,
+                                    currentX + args[j], currentY + args[j + 1],
+                                    currentX + args[j + 2], currentY + args[j + 3],
+                                    currentX + args[j + 4], currentY + args[j + 5]
+                                );
+                                
+                                currentX += args[j + 4];
+                                currentY += args[j + 5];
+                            }
+                        }
+                        break;
+                        
+                    case 'S': // Courbe cubique raccourcie absolue
+                        // TODO: Meilleure implémentation
+                        if (args.length >= 4) {
+                            currentX = args[args.length - 2];
+                            currentY = args[args.length - 1];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 's': // Courbe cubique raccourcie relative
+                        // TODO: Meilleure implémentation
+                        if (args.length >= 4) {
+                            currentX += args[args.length - 2];
+                            currentY += args[args.length - 1];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 'Q': // Courbe quadratique absolue
+                        for (let j = 0; j < args.length; j += 4) {
+                            if (j + 3 < args.length) {
+                                // Approximation avec points intermédiaires
+                                this.approximateQuadraticBezier(
+                                    points,
+                                    currentX, currentY,
+                                    args[j], args[j + 1],
+                                    args[j + 2], args[j + 3]
+                                );
+                                
+                                currentX = args[j + 2];
+                                currentY = args[j + 3];
+                            }
+                        }
+                        break;
+                        
+                    case 'q': // Courbe quadratique relative
+                        for (let j = 0; j < args.length; j += 4) {
+                            if (j + 3 < args.length) {
+                                // Approximation avec points intermédiaires
+                                this.approximateQuadraticBezier(
+                                    points,
+                                    currentX, currentY,
+                                    currentX + args[j], currentY + args[j + 1],
+                                    currentX + args[j + 2], currentY + args[j + 3]
+                                );
+                                
+                                currentX += args[j + 2];
+                                currentY += args[j + 3];
+                            }
+                        }
+                        break;
+                        
+                    case 'T': // Courbe quadratique raccourcie absolue
+                        // TODO: Meilleure implémentation
+                        if (args.length >= 2) {
+                            currentX = args[args.length - 2];
+                            currentY = args[args.length - 1];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 't': // Courbe quadratique raccourcie relative
+                        // TODO: Meilleure implémentation
+                        if (args.length >= 2) {
+                            currentX += args[args.length - 2];
+                            currentY += args[args.length - 1];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 'A': // Arc elliptique absolu
+                        // TODO: Meilleure implémentation
+                        if (args.length >= 7) {
+                            currentX = args[args.length - 2];
+                            currentY = args[args.length - 1];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 'a': // Arc elliptique relatif
+                        // TODO: Meilleure implémentation
+                        if (args.length >= 7) {
+                            currentX += args[args.length - 2];
+                            currentY += args[args.length - 1];
+                            points.push({ x: currentX, y: currentY });
+                        }
+                        break;
+                        
+                    case 'Z': // Fermeture du chemin
+                    case 'z':
+                        if (pathStarted) {
+                            // Vérifier si on est déjà au point de départ
+                            if (Math.abs(currentX - firstX) > 0.1 || Math.abs(currentY - firstY) > 0.1) {
+                                currentX = firstX;
+                                currentY = firstY;
+                                points.push({ x: currentX, y: currentY });
+                            }
+                        }
+                        break;
+                }
+            }
+            
+            return points;
+        } catch (error) {
+            console.error("Erreur de parsing SVG:", error);
+            return [];
+        }
+    }
+    
+    /**
+     * Approxime une courbe de Bézier cubique par des segments de ligne
+     * @param {Array} points - Tableau à remplir avec les points
+     * @param {number} x0 - Point de départ X
+     * @param {number} y0 - Point de départ Y
+     * @param {number} x1 - Premier point de contrôle X
+     * @param {number} y1 - Premier point de contrôle Y
+     * @param {number} x2 - Deuxième point de contrôle X
+     * @param {number} y2 - Deuxième point de contrôle Y
+     * @param {number} x3 - Point d'arrivée X
+     * @param {number} y3 - Point d'arrivée Y
+     */
+    approximateCubicBezier(points, x0, y0, x1, y1, x2, y2, x3, y3) {
+        // Nombre de segments pour l'approximation (adapter selon la précision voulue)
+        const segments = 10;
+        
+        // Ajouter des points intermédiaires
+        for (let i = 1; i <= segments; i++) {
+            const t = i / segments;
+            const tt = t * t;
+            const ttt = tt * t;
+            const u = 1 - t;
+            const uu = u * u;
+            const uuu = uu * u;
+            
+            // Formule de Bézier cubique
+            const x = uuu * x0 + 3 * uu * t * x1 + 3 * u * tt * x2 + ttt * x3;
+            const y = uuu * y0 + 3 * uu * t * y1 + 3 * u * tt * y2 + ttt * y3;
+            
+            points.push({ x, y });
+        }
+    }
+    
+    /**
+     * Approxime une courbe de Bézier quadratique par des segments de ligne
+     * @param {Array} points - Tableau à remplir avec les points
+     * @param {number} x0 - Point de départ X
+     * @param {number} y0 - Point de départ Y
+     * @param {number} x1 - Point de contrôle X
+     * @param {number} y1 - Point de contrôle Y
+     * @param {number} x2 - Point d'arrivée X
+     * @param {number} y2 - Point d'arrivée Y
+     */
+    approximateQuadraticBezier(points, x0, y0, x1, y1, x2, y2) {
+        // Nombre de segments pour l'approximation
+        const segments = 8;
+        
+        // Ajouter des points intermédiaires
+        for (let i = 1; i <= segments; i++) {
+            const t = i / segments;
+            const u = 1 - t;
+            
+            // Formule de Bézier quadratique
+            const x = u * u * x0 + 2 * u * t * x1 + t * t * x2;
+            const y = u * u * y0 + 2 * u * t * y1 + t * t * y2;
+            
+            points.push({ x, y });
+        }
     }
 
     /**

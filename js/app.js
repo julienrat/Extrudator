@@ -25,8 +25,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const turdsizeValue = document.getElementById('turdsize-value');
     const alphamaxInput = document.getElementById('alphamax');
     const alphamaxValue = document.getElementById('alphamax-value');
+    const ltresInput = document.getElementById('ltres');
+    const ltresValue = document.getElementById('ltres-value');
+    const qtresInput = document.getElementById('qtres');
+    const qtresValue = document.getElementById('qtres-value');
+    const pathomitInput = document.getElementById('pathomit');
+    const pathomitValue = document.getElementById('pathomit-value');
     const blurradiusInput = document.getElementById('blurradius');
     const blurradiusValue = document.getElementById('blurradius-value');
+    const blurdeltaInput = document.getElementById('blurdelta');
+    const blurdeltaValue = document.getElementById('blurdelta-value');
+    const colorsamplingInput = document.getElementById('colorsampling');
     const opttoleranceInput = document.getElementById('opttolerance');
     const opttoleranceValue = document.getElementById('opttolerance-value');
     const strokewidthInput = document.getElementById('strokewidth');
@@ -127,7 +136,11 @@ document.addEventListener('DOMContentLoaded', () => {
         simplificationValue.textContent = simplificationInput.value;
         turdsizeValue.textContent = turdsizeInput.value;
         alphamaxValue.textContent = alphamaxInput.value;
+        ltresValue.textContent = ltresInput.value;
+        qtresValue.textContent = qtresInput.value;
+        pathomitValue.textContent = pathomitInput.value;
         blurradiusValue.textContent = blurradiusInput.value;
+        blurdeltaValue.textContent = blurdeltaInput.value;
         opttoleranceValue.textContent = opttoleranceInput.value;
         strokewidthValue.textContent = strokewidthInput.value;
     }
@@ -137,7 +150,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return {
             turdsize: parseInt(turdsizeInput.value),
             alphamax: parseFloat(alphamaxInput.value),
+            ltres: parseFloat(ltresInput.value),
+            qtres: parseFloat(qtresInput.value),
+            pathomit: parseInt(pathomitInput.value),
             blurradius: parseFloat(blurradiusInput.value),
+            blurdelta: parseInt(blurdeltaInput.value),
+            colorsampling: parseInt(colorsamplingInput.value),
             opttolerance: parseFloat(opttoleranceInput.value),
             strokewidth: parseFloat(strokewidthInput.value),
             rightangleenhance: rightangleenhanceInput.checked
@@ -154,7 +172,11 @@ document.addEventListener('DOMContentLoaded', () => {
     simplificationInput.addEventListener('input', updateSliderValues);
     turdsizeInput.addEventListener('input', updateSliderValues);
     alphamaxInput.addEventListener('input', updateSliderValues);
+    ltresInput.addEventListener('input', updateSliderValues);
+    qtresInput.addEventListener('input', updateSliderValues);
+    pathomitInput.addEventListener('input', updateSliderValues);
     blurradiusInput.addEventListener('input', updateSliderValues);
+    blurdeltaInput.addEventListener('input', updateSliderValues);
     opttoleranceInput.addEventListener('input', updateSliderValues);
     strokewidthInput.addEventListener('input', updateSliderValues);
     
