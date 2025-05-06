@@ -40,6 +40,78 @@ p {
     background-color: #f9f9f9;
 }
 
+/* Styles pour les options d'upload */
+.upload-options {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.file-upload {
+    flex: 1;
+    min-width: 250px;
+}
+
+.or-divider {
+    font-weight: bold;
+    color: #7f8c8d;
+    padding: 0 10px;
+}
+
+.webcam-button {
+    background-color: #e74c3c;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s;
+}
+
+.webcam-button:hover {
+    background-color: #c0392b;
+}
+
+/* Interface webcam */
+.webcam-container {
+    margin-top: 20px;
+    text-align: center;
+}
+
+#webcam-video {
+    width: 100%;
+    max-width: 640px;
+    height: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.webcam-controls {
+    margin-top: 10px;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+
+#capture-btn {
+    background-color: #27ae60;
+}
+
+#capture-btn:hover {
+    background-color: #219653;
+}
+
+#cancel-webcam-btn {
+    background-color: #7f8c8d;
+}
+
+#cancel-webcam-btn:hover {
+    background-color: #6c7a89;
+}
+
 .setting {
     margin-bottom: 15px;
     display: flex;

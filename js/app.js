@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const vectorizer = new Vectorizer();
     const extruder = new Extruder();
     let vectorData = null;
+    let webcamStream = null; // Flux de la webcam
     
     // Récupérer les éléments du DOM
     const imageInput = document.getElementById('image-input');
@@ -18,6 +19,99 @@ document.addEventListener('DOMContentLoaded', () => {
     const exportStlBtn = document.getElementById('export-stl-btn');
     const exportDxfBtn = document.getElementById('export-dxf-btn');
     const modelPreviewDiv = document.getElementById('model-preview');
+    
+    // Éléments de la webcam
+    const webcamBtn = document.getElementById('webcam-btn');
+    const webcamContainer = document.getElementById('webcam-container');
+    const webcamVideo = document.getElementById('webcam-video');
+    const captureBtn = document.getElementById('capture-btn');
+    const cancelWebcamBtn = document.getElementById('cancel-webcam-btn');
+    const webcamCanvas = document.getElementById('webcam-canvas');
+    
+    // Fonction pour démarrer la webcam
+    function startWebcam() {
+        // Vérifier si navigator.mediaDevices est disponible
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            alert("Votre navigateur ne supporte pas l'accès à la webcam");
+            return;
+        }
+        
+        // Cacher l'option d'upload de fichier et afficher la webcam
+        webcamContainer.style.display = 'block';
+        
+        // Contraintes pour la webcam (HD si possible)
+        const constraints = {
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'environment' // Caméra arrière sur mobile
+            }
+        };
+        
+        // Obtenir l'accès à la webcam
+        navigator.mediaDevices.getUserMedia(constraints)
+            .then(stream => {
+                webcamStream = stream;
+                webcamVideo.srcObject = stream;
+                return webcamVideo.play();
+            })
+            .catch(error => {
+                console.error("Erreur lors de l'accès à la webcam:", error);
+                alert("Impossible d'accéder à la webcam: " + error.message);
+                stopWebcam();
+            });
+    }
+    
+    // Fonction pour arrêter la webcam
+    function stopWebcam() {
+        if (webcamStream) {
+            webcamStream.getTracks().forEach(track => track.stop());
+            webcamStream = null;
+        }
+        webcamVideo.srcObject = null;
+        webcamContainer.style.display = 'none';
+    }
+    
+    // Capturer une image depuis la webcam
+    function captureImage() {
+        if (!webcamStream) return;
+        
+        // Configurer le canvas pour la capture
+        const video = webcamVideo;
+        const canvas = webcamCanvas;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        // Dessiner l'image capturée sur le canvas
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // Créer une image à partir du canvas
+        canvas.toBlob(blob => {
+            // Créer un objet File à partir du Blob
+            const capturedFile = new File([blob], "webcam-capture.png", { type: "image/png" });
+            
+            // Charger l'image capturée dans le vectorizer
+            vectorizer.loadImage(capturedFile)
+                .then(() => {
+                    // Activer le bouton de traitement
+                    processBtn.disabled = false;
+                    processBtn.textContent = "Traiter l'image";
+                    
+                    // Arrêter la webcam et cacher l'interface
+                    stopWebcam();
+                })
+                .catch(error => {
+                    console.error("Erreur lors du chargement de l'image capturée:", error);
+                    alert("Erreur lors du chargement de l'image: " + error.message);
+                });
+        }, "image/png");
+    }
+    
+    // Écouter les clics sur les boutons liés à la webcam
+    webcamBtn.addEventListener('click', startWebcam);
+    captureBtn.addEventListener('click', captureImage);
+    cancelWebcamBtn.addEventListener('click', stopWebcam);
     
     // Écouter les changements de valeur du seuil
     thresholdInput.addEventListener('input', () => {
@@ -200,6 +294,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialiser la scène 3D vide pour éviter des erreurs
     extruder.initScene();
+    
+    // Nettoyer la webcam lors de la fermeture de la page
+    window.addEventListener('beforeunload', stopWebcam);
     
     // Afficher un message de bienvenue
     console.log('Extrudator est prêt!');

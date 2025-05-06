@@ -12,8 +12,24 @@
         <p>Vectorisation d'image et extrusion 3D</p>
         
         <div class="upload-section">
-            <label for="image-input">Choisir une image noir et blanc:</label>
-            <input type="file" id="image-input" accept="image/*">
+            <div class="upload-options">
+                <div class="file-upload">
+                    <label for="image-input">Choisir une image noir et blanc:</label>
+                    <input type="file" id="image-input" accept="image/*">
+                </div>
+                <div class="or-divider">ou</div>
+                <button id="webcam-btn" class="webcam-button">Utiliser la webcam</button>
+            </div>
+            
+            <!-- Interface webcam (cachée par défaut) -->
+            <div id="webcam-container" class="webcam-container" style="display: none;">
+                <video id="webcam-video" autoplay playsinline></video>
+                <div class="webcam-controls">
+                    <button id="capture-btn">Prendre une photo</button>
+                    <button id="cancel-webcam-btn">Annuler</button>
+                </div>
+                <canvas id="webcam-canvas" style="display: none;"></canvas>
+            </div>
         </div>
         
         <div class="settings-section">
