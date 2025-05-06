@@ -311,6 +311,98 @@ class Extruder {
             throw new Error("Aucun modèle à exporter");
         }
         
+        // Récupérer le canvas de l'aperçu vectorisé
+        const vectorCanvas = document.getElementById('vector-canvas');
+        if (!vectorCanvas) {
+            throw new Error("Canvas de l'aperçu vectorisé introuvable");
+        }
+
+        // Obtenir le contexte et les pixels de l'image
+        const ctx = vectorCanvas.getContext('2d');
+        const imageData = ctx.getImageData(0, 0, vectorCanvas.width, vectorCanvas.height);
+        const width = vectorCanvas.width;
+        const height = vectorCanvas.height;
+        
+        // Tracer les contours à partir du canvas
+        const contours = this.traceVectorCanvasContours(imageData, width, height);
+        
+        if (contours.length === 0) {
+            // Fallback sur les contours stockés dans le mesh si la détection échoue
+            console.warn("Détection de contours à partir du canvas échouée, utilisation des contours d'origine");
+            return this.exportDXFFromMeshContours();
+        }
+        
+        // Fonction pour créer un fichier DXF simple
+        function createDXF(contours, imageHeight) {
+            // En-tête DXF simplifiée
+            let dxf = '';
+            dxf += '0\nSECTION\n';
+            dxf += '2\nHEADER\n';
+            dxf += '0\nENDSEC\n';
+            dxf += '0\nSECTION\n';
+            dxf += '2\nENTITIES\n';
+            
+            // Créer une polyline pour chaque contour
+            contours.forEach((contour, index) => {
+                if (contour.length < 3) return; // Ignorer les contours trop petits
+                
+                // Utiliser des LINE simples au lieu de POLYLINE pour éviter tout problème de fermeture
+                for (let i = 0; i < contour.length - 1; i++) {
+                    const p1 = contour[i];
+                    const p2 = contour[i + 1];
+                    
+                    // Coordonnées Y inversées car DXF a l'origine en bas à gauche
+                    const y1 = imageHeight - p1.y;
+                    const y2 = imageHeight - p2.y;
+                    
+                    dxf += '0\nLINE\n';
+                    dxf += '8\nCONTOUR\n'; // Calque
+                    dxf += `10\n${p1.x.toFixed(4)}\n`; // Point de départ X
+                    dxf += `20\n${y1.toFixed(4)}\n`;   // Point de départ Y
+                    dxf += `30\n0\n`;                 // Point de départ Z
+                    dxf += `11\n${p2.x.toFixed(4)}\n`; // Point d'arrivée X
+                    dxf += `21\n${y2.toFixed(4)}\n`;   // Point d'arrivée Y
+                    dxf += `31\n0\n`;                 // Point d'arrivée Z
+                }
+                
+                // Fermer le contour en connectant le dernier et le premier point
+                // seulement si le contour n'est pas déjà fermé
+                const first = contour[0];
+                const last = contour[contour.length - 1];
+                
+                // Vérifier si le contour est déjà fermé
+                if (Math.abs(first.x - last.x) > 0.0001 || Math.abs(first.y - last.y) > 0.0001) {
+                    const y1 = imageHeight - last.y;
+                    const y2 = imageHeight - first.y;
+                    
+                    dxf += '0\nLINE\n';
+                    dxf += '8\nCONTOUR\n';
+                    dxf += `10\n${last.x.toFixed(4)}\n`;
+                    dxf += `20\n${y1.toFixed(4)}\n`;
+                    dxf += `30\n0\n`;
+                    dxf += `11\n${first.x.toFixed(4)}\n`;
+                    dxf += `21\n${y2.toFixed(4)}\n`;
+                    dxf += `31\n0\n`;
+                }
+            });
+            
+            // Fin du fichier
+            dxf += '0\nENDSEC\n';
+            dxf += '0\nEOF\n';
+            
+            return dxf;
+        }
+        
+        // Générer le DXF et le convertir en Blob
+        const dxfContent = createDXF(contours, height);
+        return new Blob([dxfContent], { type: 'application/dxf' });
+    }
+
+    /**
+     * Exporte les contours du mesh au format DXF (méthode de secours)
+     * @returns {Blob} - Fichier DXF en tant que Blob
+     */
+    exportDXFFromMeshContours() {
         // Obtenir les contours originaux pour l'export DXF
         const contours = this.mesh.userData.contours || [];
         const imageHeight = this.mesh.userData.imageHeight || 0;
@@ -383,6 +475,110 @@ class Extruder {
         // Générer le DXF et le convertir en Blob
         const dxfContent = createDXF(contours, imageHeight);
         return new Blob([dxfContent], { type: 'application/dxf' });
+    }
+
+    /**
+     * Trace les contours à partir du canvas vectorisé
+     * @param {ImageData} imageData - Données de l'image
+     * @param {number} width - Largeur de l'image
+     * @param {number} height - Hauteur de l'image
+     * @returns {Array} - Tableau de contours
+     */
+    traceVectorCanvasContours(imageData, width, height) {
+        // Créer un tableau 2D pour représenter les pixels noirs (1) et blancs (0)
+        const binaryImage = Array(height).fill().map(() => Array(width).fill(0));
+        
+        // Parcourir les pixels de l'image et identifier les pixels noirs
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                // Un pixel est considéré comme noir s'il est suffisamment sombre
+                // (valeur R, G, B moyenne inférieure à 128)
+                const r = imageData.data[idx];
+                const g = imageData.data[idx + 1];
+                const b = imageData.data[idx + 2];
+                const brightness = (r + g + b) / 3;
+                
+                // Marquer comme 1 (noir) si la luminosité est faible
+                binaryImage[y][x] = brightness < 128 ? 1 : 0;
+            }
+        }
+        
+        // Tableau pour marquer les pixels déjà visités
+        const visited = Array(height).fill().map(() => Array(width).fill(false));
+        
+        // Tableau pour stocker les contours détectés
+        const contours = [];
+        
+        // Directions de déplacement pour suivre un contour (8 directions)
+        const directions = [
+            [-1, 0], [-1, 1], [0, 1], [1, 1], 
+            [1, 0], [1, -1], [0, -1], [-1, -1]
+        ];
+        
+        // Fonction pour suivre un contour à partir d'un point de départ
+        function traceContour(startX, startY) {
+            const contour = [];
+            let x = startX;
+            let y = startY;
+            let dir = 0; // Direction initiale
+            
+            do {
+                // Marquer le pixel comme visité et l'ajouter au contour
+                visited[y][x] = true;
+                contour.push({ x, y });
+                
+                // Chercher le prochain pixel du contour
+                let found = false;
+                let count = 0;
+                
+                // Vérifier les 8 directions à partir de la direction actuelle
+                while (!found && count < 8) {
+                    const newDir = (dir + count) % 8;
+                    const [dx, dy] = directions[newDir];
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height && 
+                        binaryImage[ny][nx] === 1 && !visited[ny][nx]) {
+                        x = nx;
+                        y = ny;
+                        dir = newDir;
+                        found = true;
+                    }
+                    
+                    count++;
+                }
+                
+                // Si aucun pixel adjacent n'est trouvé, terminer le contour
+                if (!found) break;
+                
+            } while (contour.length < width * height); // Limiter la taille pour éviter les boucles infinies
+            
+            return contour;
+        }
+        
+        // Rechercher les contours en parcourant l'image
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                // Si on trouve un pixel noir non visité, démarrer un nouveau contour
+                if (binaryImage[y][x] === 1 && !visited[y][x]) {
+                    const contour = traceContour(x, y);
+                    
+                    // Ajouter le contour s'il est suffisamment grand
+                    if (contour.length > 2) {
+                        contours.push(contour);
+                    }
+                }
+            }
+        }
+        
+        // Simplifier les contours pour réduire le nombre de points
+        return contours.map(contour => {
+            // Méthode de simplification de base (tous les 2 points pour commencer)
+            // On pourrait implémenter un algorithme plus sophistiqué comme Douglas-Peucker
+            return contour.filter((_, i) => i % 2 === 0 || i === contour.length - 1);
+        });
     }
     
     /**
