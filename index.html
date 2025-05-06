@@ -47,6 +47,13 @@
                 <input type="range" id="simplification" min="0" max="10" value="5">
                 <span id="simplification-value">5</span>
             </div>
+            <div class="setting">
+                <label for="vectorization-method">Méthode de vectorisation:</label>
+                <select id="vectorization-method">
+                    <option value="binarization" selected>Binarisation directe (rapide)</option>
+                    <option value="imagetracer">ImageTracer (détaillé)</option>
+                </select>
+            </div>
             <button id="process-btn">Traiter l'image</button>
         </div>
         

@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const extrusionInput = document.getElementById('extrusion');
     const simplificationInput = document.getElementById('simplification');
     const simplificationValue = document.getElementById('simplification-value');
+    const vectorizationMethodSelect = document.getElementById('vectorization-method');
     const processBtn = document.getElementById('process-btn');
     const exportStlBtn = document.getElementById('export-stl-btn');
     const exportDxfBtn = document.getElementById('export-dxf-btn');
@@ -194,6 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const threshold = parseInt(thresholdInput.value);
         const simplification = parseInt(simplificationInput.value);
+        const vectorizationMethod = vectorizationMethodSelect.value;
         
         // Créer une promesse qui se résout après un court délai
         const delayPromise = new Promise(resolve => setTimeout(resolve, 100));
@@ -206,7 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Chaîner les promesses
         delayPromise
-            .then(() => vectorizer.vectorize(threshold, simplification))
+            .then(() => vectorizer.vectorize(threshold, simplification, vectorizationMethod))
             .then(data => {
                 // Vérifier si nous avons des contours
                 if (!data || !data.contours || data.contours.length === 0) {
