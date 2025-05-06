@@ -185,17 +185,25 @@ class Vectorizer {
     }
 
     /**
-     * Vectorise l'image en utilisant une méthode directe de binarisation
+     * Vectorise l'image en utilisant la méthode sélectionnée
      * @param {number} threshold - Valeur de seuil pour la binarisation
      * @param {number} simplification - Niveau de simplification des contours
+     * @param {string} method - Méthode de vectorisation ('binarization' ou 'imagetracer')
      * @returns {Object} - Contours vectorisés
      */
-    vectorize(threshold = this.threshold, simplification = this.simplificationTolerance) {
+    vectorize(threshold = this.threshold, simplification = this.simplificationTolerance, method = 'binarization') {
         this.threshold = threshold;
         this.simplificationTolerance = simplification;
         
-        // Utiliser une méthode directe de binarisation pour la vectorisation
-        return this.binarizationVectorize(threshold, simplification);
+        console.log(`Vectorisation avec méthode: ${method}, seuil: ${threshold}, simplification: ${simplification}`);
+        
+        // Choisir la méthode de vectorisation
+        if (method === 'imagetracer') {
+            return this.imageTracerVectorize(threshold, simplification);
+        } else {
+            // Méthode par défaut: binarisation directe
+            return this.binarizationVectorize(threshold, simplification);
+        }
     }
     
     /**
@@ -422,6 +430,206 @@ class Vectorizer {
         ctx.fillStyle = '#333333';
         ctx.font = '12px Arial';
         ctx.fillText(`Contours détectés: ${contours.length}`, 5, 15);
+    }
+
+    /**
+     * Méthode de vectorisation utilisant ImageTracer
+     * @param {number} threshold - Valeur de seuil pour la binarisation
+     * @param {number} simplification - Niveau de simplification des contours
+     * @returns {Promise} - Promise résolue avec les contours
+     */
+    imageTracerVectorize(threshold, simplification) {
+        console.log("Utilisation de la méthode ImageTracer pour la vectorisation");
+        
+        return new Promise((resolve, reject) => {
+            try {
+                // Étape 1: Binariser l'image
+                const binaryData = this.applyThreshold(threshold);
+                
+                // Étape 2: Préparer les options pour ImageTracer
+                const simplifyTolerance = Math.max(0.5, simplification / 2);
+                const ltres = Math.max(1, 10 - simplification);
+                const qtres = Math.max(1, 10 - simplification);
+                
+                const options = {
+                    ltres: ltres,             // Seuil de ligne pour tracer les segments
+                    qtres: qtres,             // Seuil de quadratique pour tracer les courbes
+                    pathomit: 8,              // Omettre les chemins avec moins de points
+                    rightangleenhance: true,  // Améliorer la détection des angles droits
+                    colorsampling: 0,         // Pas d'échantillonnage de couleur
+                    numberofcolors: 2,        // Noir et blanc seulement
+                    mincolorratio: 0,         // Pas de filtrage de couleur
+                    colorquantcycles: 1,      // Un seul cycle de quantification
+                    layering: 0,              // Pas de calques
+                    linefilter: true,         // Filtrer les lignes
+                    strokewidth: 1            // Largeur de trait
+                };
+                
+                // Étape 3: Convertir en SVG avec ImageTracer
+                const svgString = ImageTracer.imagedataToSVG(binaryData, options);
+                
+                // Étape 4: Analyser le SVG pour extraire les contours
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(svgString, "image/svg+xml");
+                const paths = svgDoc.querySelectorAll('path');
+                
+                const contours = [];
+                
+                // Étape 5: Extraire les chemins du SVG
+                paths.forEach((path) => {
+                    const pathData = path.getAttribute('d');
+                    const contour = this.parseSVGPath(pathData);
+                    
+                    // Vérifier si le contour est valide
+                    if (contour && contour.length >= 3) {
+                        // Simplifier le contour si nécessaire
+                        const simplified = simplify(contour, simplifyTolerance);
+                        
+                        // Vérifier si le contour n'est pas un cadre et est suffisamment grand
+                        if (simplified.length >= 3 && !this.isFrameContour(simplified)) {
+                            contours.push(simplified);
+                        }
+                    }
+                });
+                
+                // Étape 6: Dessiner l'aperçu
+                this.drawVectorPreview(contours);
+                
+                // Résoudre avec les contours
+                resolve({
+                    contours: contours,
+                    width: this.width,
+                    height: this.height
+                });
+            } catch (error) {
+                console.error("Erreur avec ImageTracer:", error);
+                console.log("Recours à la méthode par binarisation...");
+                
+                // Fallback vers la méthode directe
+                this.binarizationVectorize(threshold, simplification)
+                    .then(resolve)
+                    .catch(reject);
+            }
+        });
+    }
+    
+    /**
+     * Analyse un chemin SVG et le convertit en contour
+     * @param {string} path - Chaîne de données de chemin SVG
+     * @returns {Array} - Contour extrait
+     */
+    parseSVGPath(path) {
+        if (!path) return null;
+        
+        const contour = [];
+        let currentX = 0;
+        let currentY = 0;
+        
+        // Expression régulière pour extraire les commandes SVG
+        const svgCommandRegex = /([MLHVCSQTAZmlhvcsqtaz])([^MLHVCSQTAZmlhvcsqtaz]*)/g;
+        let match;
+        
+        while ((match = svgCommandRegex.exec(path)) !== null) {
+            const command = match[1];
+            const params = match[2].trim().split(/[\s,]+/).filter(p => p !== '').map(parseFloat);
+            
+            switch (command) {
+                case 'M': // MoveTo absolu
+                    if (params.length >= 2) {
+                        currentX = params[0];
+                        currentY = params[1];
+                        contour.push({ x: currentX, y: currentY });
+                        
+                        // Traiter les paires supplémentaires comme des LineTo
+                        for (let i = 2; i < params.length; i += 2) {
+                            if (i + 1 < params.length) {
+                                currentX = params[i];
+                                currentY = params[i + 1];
+                                contour.push({ x: currentX, y: currentY });
+                            }
+                        }
+                    }
+                    break;
+                
+                case 'm': // MoveTo relatif
+                    if (params.length >= 2) {
+                        currentX += params[0];
+                        currentY += params[1];
+                        contour.push({ x: currentX, y: currentY });
+                        
+                        // Traiter les paires supplémentaires comme des LineTo relatifs
+                        for (let i = 2; i < params.length; i += 2) {
+                            if (i + 1 < params.length) {
+                                currentX += params[i];
+                                currentY += params[i + 1];
+                                contour.push({ x: currentX, y: currentY });
+                            }
+                        }
+                    }
+                    break;
+                
+                case 'L': // LineTo absolu
+                    for (let i = 0; i < params.length; i += 2) {
+                        if (i + 1 < params.length) {
+                            currentX = params[i];
+                            currentY = params[i + 1];
+                            contour.push({ x: currentX, y: currentY });
+                        }
+                    }
+                    break;
+                
+                case 'l': // LineTo relatif
+                    for (let i = 0; i < params.length; i += 2) {
+                        if (i + 1 < params.length) {
+                            currentX += params[i];
+                            currentY += params[i + 1];
+                            contour.push({ x: currentX, y: currentY });
+                        }
+                    }
+                    break;
+                
+                case 'H': // Ligne horizontale absolue
+                    for (let i = 0; i < params.length; i++) {
+                        currentX = params[i];
+                        contour.push({ x: currentX, y: currentY });
+                    }
+                    break;
+                
+                case 'h': // Ligne horizontale relative
+                    for (let i = 0; i < params.length; i++) {
+                        currentX += params[i];
+                        contour.push({ x: currentX, y: currentY });
+                    }
+                    break;
+                
+                case 'V': // Ligne verticale absolue
+                    for (let i = 0; i < params.length; i++) {
+                        currentY = params[i];
+                        contour.push({ x: currentX, y: currentY });
+                    }
+                    break;
+                
+                case 'v': // Ligne verticale relative
+                    for (let i = 0; i < params.length; i++) {
+                        currentY += params[i];
+                        contour.push({ x: currentX, y: currentY });
+                    }
+                    break;
+                
+                case 'Z':
+                case 'z': // Fermeture du chemin
+                    // Si le contour est non vide, fermer en ajoutant le premier point
+                    if (contour.length > 0) {
+                        contour.push({ ...contour[0] });
+                    }
+                    break;
+                
+                // Pour les courbes, on pourrait ajouter des implémentations plus complexes
+                // Mais pour l'instant, on ignore les commandes de courbe complexes
+            }
+        }
+        
+        return contour;
     }
 }
 
