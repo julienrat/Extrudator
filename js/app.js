@@ -15,11 +15,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const extrusionInput = document.getElementById('extrusion');
     const simplificationInput = document.getElementById('simplification');
     const simplificationValue = document.getElementById('simplification-value');
-    const vectorizationMethodSelect = document.getElementById('vectorization-method');
     const processBtn = document.getElementById('process-btn');
     const exportStlBtn = document.getElementById('export-stl-btn');
     const exportDxfBtn = document.getElementById('export-dxf-btn');
     const modelPreviewDiv = document.getElementById('model-preview');
+    
+    // Éléments des options avancées
+    const turdsizeInput = document.getElementById('turdsize');
+    const turdsizeValue = document.getElementById('turdsize-value');
+    const alphamaxInput = document.getElementById('alphamax');
+    const alphamaxValue = document.getElementById('alphamax-value');
+    const blurradiusInput = document.getElementById('blurradius');
+    const blurradiusValue = document.getElementById('blurradius-value');
+    const opttoleranceInput = document.getElementById('opttolerance');
+    const opttoleranceValue = document.getElementById('opttolerance-value');
+    const strokewidthInput = document.getElementById('strokewidth');
+    const strokewidthValue = document.getElementById('strokewidth-value');
+    const rightangleenhanceInput = document.getElementById('rightangleenhance');
     
     // Éléments de la webcam
     const webcamBtn = document.getElementById('webcam-btn');
@@ -109,20 +121,42 @@ document.addEventListener('DOMContentLoaded', () => {
         }, "image/png");
     }
     
+    // Mettre à jour les valeurs affichées des sliders
+    function updateSliderValues() {
+        thresholdValue.textContent = thresholdInput.value;
+        simplificationValue.textContent = simplificationInput.value;
+        turdsizeValue.textContent = turdsizeInput.value;
+        alphamaxValue.textContent = alphamaxInput.value;
+        blurradiusValue.textContent = blurradiusInput.value;
+        opttoleranceValue.textContent = opttoleranceInput.value;
+        strokewidthValue.textContent = strokewidthInput.value;
+    }
+    
+    // Obtenir les options avancées à partir des inputs
+    function getAdvancedOptions() {
+        return {
+            turdsize: parseInt(turdsizeInput.value),
+            alphamax: parseFloat(alphamaxInput.value),
+            blurradius: parseFloat(blurradiusInput.value),
+            opttolerance: parseFloat(opttoleranceInput.value),
+            strokewidth: parseFloat(strokewidthInput.value),
+            rightangleenhance: rightangleenhanceInput.checked
+        };
+    }
+    
     // Écouter les clics sur les boutons liés à la webcam
     webcamBtn.addEventListener('click', startWebcam);
     captureBtn.addEventListener('click', captureImage);
     cancelWebcamBtn.addEventListener('click', stopWebcam);
     
-    // Écouter les changements de valeur du seuil
-    thresholdInput.addEventListener('input', () => {
-        thresholdValue.textContent = thresholdInput.value;
-    });
-    
-    // Écouter les changements de valeur de simplification
-    simplificationInput.addEventListener('input', () => {
-        simplificationValue.textContent = simplificationInput.value;
-    });
+    // Écouter les changements de valeur des sliders
+    thresholdInput.addEventListener('input', updateSliderValues);
+    simplificationInput.addEventListener('input', updateSliderValues);
+    turdsizeInput.addEventListener('input', updateSliderValues);
+    alphamaxInput.addEventListener('input', updateSliderValues);
+    blurradiusInput.addEventListener('input', updateSliderValues);
+    opttoleranceInput.addEventListener('input', updateSliderValues);
+    strokewidthInput.addEventListener('input', updateSliderValues);
     
     // Écouter les changements d'image
     imageInput.addEventListener('change', (event) => {
@@ -195,7 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const threshold = parseInt(thresholdInput.value);
         const simplification = parseInt(simplificationInput.value);
-        const vectorizationMethod = vectorizationMethodSelect.value;
+        const advancedOptions = getAdvancedOptions();
         
         // Créer une promesse qui se résout après un court délai
         const delayPromise = new Promise(resolve => setTimeout(resolve, 100));
@@ -208,7 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Chaîner les promesses
         delayPromise
-            .then(() => vectorizer.vectorize(threshold, simplification, vectorizationMethod))
+            .then(() => vectorizer.vectorize(threshold, simplification, advancedOptions))
             .then(data => {
                 // Vérifier si nous avons des contours
                 if (!data || !data.contours || data.contours.length === 0) {
@@ -297,8 +331,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialiser la scène 3D vide pour éviter des erreurs
     extruder.initScene();
     
-    // Nettoyer la webcam lors de la fermeture de la page
-    window.addEventListener('beforeunload', stopWebcam);
+    // Initialiser les valeurs affichées
+    updateSliderValues();
     
     // Afficher un message de bienvenue
     console.log('Extrudator est prêt!');
