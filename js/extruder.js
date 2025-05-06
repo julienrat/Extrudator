@@ -91,6 +91,201 @@ class Extruder {
     }
     
     /**
+     * Crée un modèle 3D à partir des contours vectorisés
+     * @param {Object} contourData - Données des contours (retour de Vectorizer.vectorize)
+     * @param {number} height - Hauteur d'extrusion en mm
+     * @returns {Object} - Mesh THREE.js du modèle
+     */
+    createModel(contourData, height = 10) {
+        if (!contourData || !contourData.contours || contourData.contours.length === 0) {
+            console.error("Aucun contour disponible pour la création du modèle");
+            return null;
+        }
+        
+        this.cleanup();
+        
+        // Créer un groupe pour contenir tous les maillages
+        const group = new THREE.Group();
+        this.scene.add(group);
+        
+        // Récupérer les dimensions d'origine
+        const originalWidth = contourData.width;
+        const originalHeight = contourData.height;
+        
+        // Définir l'échelle pour la conversion des unités (mm)
+        const scale = this.modelSize / Math.max(originalWidth, originalHeight);
+        
+        // Analyser les contours pour distinguer extérieurs et trous
+        const analyzeContour = (contour) => {
+            // Calculer le sens d'orientation (horaire/anti-horaire) du contour
+            let area = 0;
+            for (let i = 0; i < contour.length; i++) {
+                const j = (i + 1) % contour.length;
+                area += contour[i].x * contour[j].y;
+                area -= contour[j].x * contour[i].y;
+            }
+            return { 
+                isHole: area < 0,
+                area: Math.abs(area / 2),
+                points: contour
+            };
+        };
+        
+        // Stocker les contours avec leur orientation
+        const analyzedContours = contourData.contours.map(contour => analyzeContour(contour));
+        
+        // Trier par aire décroissante pour traiter les plus grandes formes d'abord
+        analyzedContours.sort((a, b) => b.area - a.area);
+        
+        // Séparer les contours extérieurs et les trous
+        const externalContours = analyzedContours.filter(c => !c.isHole);
+        const holes = analyzedContours.filter(c => c.isHole);
+        
+        // Associer les trous à leurs contours parents
+        const shapesWithHoles = [];
+        
+        for (const external of externalContours) {
+            // Créer un objet pour cette forme
+            const shape = {
+                external: external.points,
+                holes: []
+            };
+            
+            // Trouver tous les trous à l'intérieur de ce contour
+            for (const hole of holes) {
+                // Vérifier si un point du trou est à l'intérieur du contour externe
+                if (this.isPointInContour(hole.points[0], external.points)) {
+                    shape.holes.push(hole.points);
+                }
+            }
+            
+            shapesWithHoles.push(shape);
+        }
+        
+        // Retirer les contours qui n'ont pas une taille minimale
+        const tinyShapeThreshold = 10; // pixels carrés
+        const validShapes = shapesWithHoles.filter(shape => {
+            const area = this.calculateContourArea(shape.external);
+            return area > tinyShapeThreshold;
+        });
+        
+        // Pour chaque forme, créer un maillage
+        validShapes.forEach(shape => {
+            try {
+                // Créer une forme THREE.js avec les trous
+                const threeShape = new THREE.Shape();
+                
+                // Ajouter le contour extérieur
+                const firstPoint = shape.external[0];
+                threeShape.moveTo(
+                    (firstPoint.x - originalWidth / 2) * scale,
+                    (originalHeight / 2 - firstPoint.y) * scale
+                );
+                
+                for (let i = 1; i < shape.external.length; i++) {
+                    const point = shape.external[i];
+                    threeShape.lineTo(
+                        (point.x - originalWidth / 2) * scale,
+                        (originalHeight / 2 - point.y) * scale
+                    );
+                }
+                
+                // Ajouter les trous
+                shape.holes.forEach(holePoints => {
+                    const holePath = new THREE.Path();
+                    
+                    const firstHolePoint = holePoints[0];
+                    holePath.moveTo(
+                        (firstHolePoint.x - originalWidth / 2) * scale,
+                        (originalHeight / 2 - firstHolePoint.y) * scale
+                    );
+                    
+                    for (let i = 1; i < holePoints.length; i++) {
+                        const point = holePoints[i];
+                        holePath.lineTo(
+                            (point.x - originalWidth / 2) * scale,
+                            (originalHeight / 2 - point.y) * scale
+                        );
+                    }
+                    
+                    threeShape.holes.push(holePath);
+                });
+                
+                // Créer la géométrie d'extrusion
+                const extrudeSettings = {
+                    steps: 1,
+                    depth: height,
+                    bevelEnabled: false
+                };
+                
+                const geometry = new THREE.ExtrudeGeometry(threeShape, extrudeSettings);
+                
+                // Créer le matériau et le maillage
+                const material = new THREE.MeshPhongMaterial({ 
+                    color: 0x3f51b5,
+                    shininess: 40,
+                    flatShading: true
+                });
+                
+                const mesh = new THREE.Mesh(geometry, material);
+                
+                // Stocker les contours originaux pour l'export DXF
+                mesh.userData.contours = [shape.external, ...shape.holes];
+                mesh.userData.imageHeight = originalHeight;
+                
+                // Ajouter au groupe
+                group.add(mesh);
+                
+                // Stocker pour l'exportation
+                this.meshes.push(mesh);
+                
+            } catch (error) {
+                console.error("Erreur lors de la création du maillage:", error);
+            }
+        });
+        
+        // Repositionner la caméra pour voir tout le modèle
+        this.resetCamera();
+        
+        return this.meshes.length > 0 ? this.meshes[0] : null;
+    }
+    
+    /**
+     * Calcule l'aire d'un polygone
+     * @param {Array} contour - Points du contour
+     * @returns {number} - Aire du polygone
+     */
+    calculateContourArea(contour) {
+        let area = 0;
+        for (let i = 0; i < contour.length; i++) {
+            const j = (i + 1) % contour.length;
+            area += contour[i].x * contour[j].y;
+            area -= contour[j].x * contour[i].y;
+        }
+        return Math.abs(area / 2);
+    }
+    
+    /**
+     * Vérifie si un point est à l'intérieur d'un contour
+     * @param {Object} point - Point à tester {x, y}
+     * @param {Array} contour - Contour sous forme de tableau de points {x, y}
+     * @returns {boolean} - true si le point est à l'intérieur du contour
+     */
+    isPointInContour(point, contour) {
+        // Algorithme ray-casting
+        let inside = false;
+        for (let i = 0, j = contour.length - 1; i < contour.length; j = i++) {
+            const xi = contour[i].x, yi = contour[i].y;
+            const xj = contour[j].x, yj = contour[j].y;
+            
+            const intersect = ((yi > point.y) !== (yj > point.y)) &&
+                (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+    
+    /**
      * Réinitialise la caméra pour voir tout le modèle
      */
     resetCamera() {
